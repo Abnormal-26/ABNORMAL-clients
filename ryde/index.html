@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Ryde: Game Club</title>
+  <meta name="description" content="Three playable concepts for a Ryde Black Friday leaderboard giveaway." />
+  <meta property="og:title" content="Ryde: Game Club" />
+  <meta property="og:description" content="Three ways to play your rhythm. Concept prototypes by ABNORMAL." />
+  <link rel="stylesheet" href="shared/ui.css" />
+  <style>
+    body { overflow: auto; }
+    .wrap { max-width: 1160px; margin: 0 auto; padding: calc(env(safe-area-inset-top) + 22px) calc(env(safe-area-inset-right) + 20px) calc(env(safe-area-inset-bottom) + 28px) calc(env(safe-area-inset-left) + 20px); }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    header .tag { font-weight: 700; font-size: 13px; }
+    .hero { margin: 34px 0 26px; display: grid; gap: 18px; }
+    .hero h1 { font-weight: 900; font-size: clamp(46px, 9.5vw, 112px); line-height: 0.92; letter-spacing: -0.03em; margin: 0; }
+    .hero p { font-weight: 600; font-size: clamp(16px, 2.2vw, 21px); line-height: 1.35; margin: 0; max-width: 640px; }
+    .dots { display: flex; gap: 8px; }
+    .dots i { width: 22px; height: 22px; border-radius: 50%; display: block; }
+    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    @media (max-width: 900px) { .cards { grid-template-columns: 1fr; } }
+    .card { position: relative; border-radius: 28px; padding: 22px 22px 22px; color: var(--ink); text-decoration: none; display: flex; flex-direction: column; gap: 10px; min-height: 460px; overflow: hidden; }
+    .card canvas { width: 100%; height: 230px; display: block; margin: -4px 0 4px; }
+    .card .eyebrow { font-size: 13px; }
+    .card h2 { font-weight: 900; font-size: clamp(38px, 5vw, 54px); line-height: 0.92; letter-spacing: -0.035em; margin: 0; }
+    .card p { font-weight: 600; font-size: 15px; line-height: 1.38; margin: 0; flex: 1; }
+    .card .meta { font-weight: 800; font-size: 12px; opacity: 0.75; }
+    .card .go { align-self: flex-start; margin-top: 6px; background: var(--ink); color: var(--paper); font-weight: 800; font-size: 16px; padding: 13px 22px; border-radius: 999px; }
+    .card:hover .go, .card:focus-visible .go { background: #000; transform: translateY(-1px); }
+    .c-rhythm { background: var(--focus); }
+    .c-run { background: var(--exercise); color: var(--ink); }
+    .c-drop { background: var(--sleep); color: var(--paper); }
+    .c-drop .go { background: var(--paper); color: var(--ink); }
+    .how { margin: 34px 0 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    @media (max-width: 900px) { .how { grid-template-columns: 1fr; } }
+    .how div { background: var(--mist); border-radius: 22px; padding: 20px; }
+    .how b { display: block; font-weight: 900; font-size: 22px; letter-spacing: -0.02em; margin-bottom: 6px; }
+    .how span { font-weight: 600; font-size: 14px; line-height: 1.4; }
+    footer { margin-top: 30px; font-size: 12px; font-weight: 600; color: rgba(19,19,19,0.55); line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="wordmark">Ryde<i>:</i><small>your rhythm</small></span>
+      <span class="tag">Black Friday · Cyber Monday</span>
+    </header>
+    <section class="hero">
+      <div class="dots"><i style="background:var(--energy)"></i><i style="background:var(--focus)"></i><i style="background:var(--exercise)"></i><i style="background:var(--relax)"></i><i style="background:var(--sleep)"></i></div>
+      <h1>Three ways to play your rhythm.</h1>
+      <p>A leaderboard giveaway for the sale weekend. Play on your phone, post a score, unlock a code. The top of the board wins a year of Ryde.</p>
+    </section>
+    <section class="cards">
+      <a class="card c-rhythm" href="rhythm/">
+        <canvas data-art="rhythm"></canvas>
+        <span class="eyebrow">A shot of</span>
+        <h2>Your Rhythm</h2>
+        <p>The day drops to the beat. 6:30 alarm, deadline, run club, inbox: 400, lights out. Tap the right shot for the moment.</p>
+        <span class="meta">Rhythm game · 1 thumb · 1–3 min</span>
+        <span class="go">Play ></span>
+      </a>
+      <a class="card c-run" href="run-club/">
+        <canvas data-art="run"></canvas>
+        <span class="eyebrow">A shot of</span>
+        <h2>Run Club</h2>
+        <p>One tap to jump through a city day. Every label line is a power-up: a jetpack, a light bulb moment, new sneakers, comfy socks, sweet dreams.</p>
+        <span class="meta">Endless runner · 1 tap · 1–2 min</span>
+        <span class="go">Play ></span>
+      </a>
+      <a class="card c-drop" href="drop/">
+        <canvas data-art="drop"></canvas>
+        <span class="eyebrow">A shot of</span>
+        <h2>Drop Shot</h2>
+        <p>Drop the five shots into a giant Ryde. Match colours to merge your way up to the full day. Calm, clever, hard to put down.</p>
+        <span class="meta">Merge puzzle · drag + drop · 3–6 min</span>
+        <span class="go">Play ></span>
+      </a>
+    </section>
+    <section class="how">
+      <div><b>Play</b><span>Built for a thumb on a phone. Each game teaches the five shots and the moments they're for, just by playing it.</span></div>
+      <div><b>Post</b><span>One global leaderboard per game, with names screened and approved by a person before they appear.</span></div>
+      <div><b>Unlock</b><span>Score thresholds unlock tiered sale codes. The top of the board on Cyber Monday wins the big prize.</span></div>
+    </section>
+    <footer>Concept prototypes by ABNORMAL for Ryde. 18+ to enter the giveaway. Discount codes are placeholders.</footer>
+  </div>
+  <script type="module">
+    import { drawBottle, drawDot, loadFont, SHOTS } from "./shared/brand.js";
+    await loadFont();
+    const art = {
+      rhythm(x, w, h) { // five bottles in a row, the middle one popping on the beat
+        const t = performance.now() / 1000, n = 5, gap = w / n;
+        SHOTS.forEach((s, i) => { const pop = Math.max(0, Math.sin(t * 3.2 - i * 0.9)) ** 6; drawBottle(x, gap * (i + 0.5), h * 0.58 - pop * h * 0.08, Math.min(h * 0.72, gap * 1.9), s.id, { label: false }); });
+      },
+      run(x, w, h) { // one bottle mid-stride over dots
+        const t = performance.now() / 1000;
+        for (let i = 0; i < 7; i++) drawDot(x, ((i * 52 - t * 90) % (w + 60) + w + 60) % (w + 60) - 30, h * 0.36 + Math.sin(i) * 10, 9, SHOTS[i % 5].id);
+        drawBottle(x, w * 0.42, h * 0.55 - Math.abs(Math.sin(t * 5)) * h * 0.08, h * 0.74, "exercise", { tilt: 0.12 });
+        x.fillStyle = "#131313"; x.fillRect(0, h * 0.94, w, 4);
+      },
+      drop(x, w, h) { // falling dots stacking
+        const t = performance.now() / 1000; const cx = w / 2;
+        drawBottle(x, cx, h * 0.52, h * 0.92, "sleep", { label: false, shadow: false, alpha: 0.95 });
+        const rs = [11, 14, 18, 22, 27]; const ids = ["energy", "focus", "exercise", "relax", "sleep"];
+        drawDot(x, cx - 16, h * 0.86, rs[4], ids[4]); drawDot(x, cx + 20, h * 0.875, rs[3], ids[3]); drawDot(x, cx + 4, h * 0.73, rs[2], ids[2]);
+        const y = h * 0.2 + ((t * 70) % (h * 0.42)); drawDot(x, cx + 10, y, rs[1], ids[1]);
+      },
+    };
+    const canvases = [...document.querySelectorAll("canvas[data-art]")];
+    function frame() {
+      for (const c of canvases) {
+        const r = c.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
+        if (c.width !== Math.round(r.width * dpr)) { c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr); }
+        const x = c.getContext("2d"); x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, r.width, r.height);
+        art[c.dataset.art](x, r.width, r.height);
+      }
+      requestAnimationFrame(frame);
+    }
+    frame();
+  </script>
+</body>
+</html>

@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<title>Ryde: Run Club</title>
+<meta name="description" content="A one-tap runner through your day. Every Ryde label line is a power-up. Run far, post a score, unlock a code.">
+<meta property="og:title" content="Ryde: Run Club">
+<meta property="og:description" content="Outrun Monday. A one-tap runner where every label line is a power-up: a jetpack, a light bulb moment, new sneakers, comfy socks and sweet dreams.">
+<meta property="og:type" content="website">
+<link rel="preload" href="../shared/fonts/inter-tight-latin-900-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="../shared/ui.css">
+<style>
+  :root { --as: var(--exercise); }
+  body { background: var(--stone); }
+  .screen { background: var(--paper); }
+  .topbar { display: flex; align-items: center; justify-content: space-between; min-height: 44px; }
+  .snd { min-height: 40px; display: inline-flex; align-items: center; gap: 8px; }
+  .snd::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--exercise); }
+  .snd.off::before { background: transparent; box-shadow: inset 0 0 0 2px var(--ink); }
+  .kicker { font-weight: 700; font-size: 15px; margin: 0 0 6px; }
+  .kicker b { font-weight: 900; }
+  .display { font-size: clamp(60px, 19vw, 88px); }
+  /* start: the hero on a stone block with a big brand circle */
+  .stage { position: relative; height: clamp(190px, 30vh, 250px); padding: 0; overflow: hidden; }
+  .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .stage .tagline { position: absolute; left: 16px; top: 14px; font-weight: 800; font-size: 13px; background: var(--paper); border-radius: 999px; padding: 7px 12px; }
+  .stage .tagline span { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--as); margin-right: 6px; vertical-align: 0; }
+  .pick { position: absolute; left: 12px; bottom: 10px; display: flex; align-items: center; gap: 2px; }
+  .pick > span { font-weight: 800; font-size: 13px; margin: 0 6px 0 4px; }
+  .pick > span::after { content: " >"; }
+  .pick-dot { width: 40px; height: 40px; border: 0; padding: 0; background: transparent; cursor: pointer; display: grid; place-items: center; border-radius: 50%; }
+  .pick-dot::before { content: ""; width: 24px; height: 24px; border-radius: 50%; background: var(--c); transition: transform .15s; }
+  .pick-dot[aria-pressed="true"]::before { box-shadow: 0 0 0 3px var(--stone), 0 0 0 5px var(--ink); transform: scale(1.06); }
+  .pick-dot:focus-visible { outline: 2px solid var(--ink); }
+  .lede b { font-weight: 900; }
+  .btn.go { font-size: 20px; padding: 19px 28px; }
+  .btn.go::after { content: " >"; }
+  .powers h3 { margin: 0 0 10px; font-size: 13px; font-weight: 800; }
+  .powers h3::after { content: " >"; }
+  .powers ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  .powers li { display: grid; grid-template-columns: 22px 1fr; gap: 0 10px; align-items: baseline; }
+  .powers li i { width: 18px; height: 18px; border-radius: 50%; background: var(--c); align-self: start; margin-top: 1px; }
+  .powers li b { font-size: 15px; font-weight: 800; }
+  .powers li span { grid-column: 2; font-size: 13px; font-weight: 600; color: #4a4a4a; }
+  /* end: a colour block in your shot's colour */
+  .result { background: var(--as); border-radius: 22px; padding: 18px 18px 20px; }
+  .result .kicker { margin: 0; }
+  .result .score-big { margin: 8px 0 2px; }
+  .result .pts { font-weight: 800; font-size: 14px; margin: 0 0 14px; }
+  .stats { gap: 28px; flex-wrap: wrap; }
+  .best { font-size: 13px; font-weight: 700; margin: 10px 0 0; opacity: 0.8; }
+  .reward .t.dim { opacity: 0.65; margin-top: 4px; }
+  .reward .bar { height: 8px; border-radius: 99px; background: rgba(19,19,19,0.12); margin: 8px 0 8px; overflow: hidden; }
+  .reward .bar i { display: block; height: 100%; background: var(--as); border-radius: 99px; }
+  .reward.locked b { letter-spacing: 0; }
+  .namerow .btn.small { font-size: 15px; padding: 0 18px; min-height: 52px; }
+  .shop { font-weight: 800; font-size: 16px; color: var(--ink); text-decoration: none; padding: 10px 0; align-self: flex-start; }
+  .shop:hover { text-decoration: underline; }
+  .board ol { min-height: 30px; }
+  #pause { position: fixed; inset: 0; z-index: 20; background: rgba(19,19,19,0.55); display: grid; place-items: center; padding: 20px; }
+  #pause.hidden { display: none; }
+  #pause .card { background: var(--paper); border-radius: 22px; padding: 22px; width: min(340px, 100%); display: grid; gap: 12px; }
+  #pause .display { font-size: 56px; }
+  /* short landscape phones: two columns so Play is on the first screen */
+  @media (orientation: landscape) and (max-height: 540px) {
+    .screen .col { max-width: 860px; display: grid; grid-template-columns: 1fr 1fr; column-gap: 24px; row-gap: 12px; align-items: start; }
+    .screen .col > * { grid-column: 2; }
+    .screen .col > .topbar { grid-column: 1 / -1; }
+    .screen .col > .left { grid-column: 1; grid-row: 2 / span 6; display: flex; flex-direction: column; gap: 12px; }
+    .display { font-size: 56px; }
+    .stage { height: 170px; }
+    .result .score-big { font-size: 64px; }
+  }
+</style>
+</head>
+<body>
+<canvas class="play" id="game" aria-label="Run Club game"></canvas>
+
+<section class="screen" id="start">
+  <div class="col">
+    <div class="topbar"><span class="wordmark" aria-label="Ryde">Ryde<i>:</i></span><button class="btn small ghost snd" data-mute>Sound on</button></div>
+    <div class="left">
+      <div>
+        <p class="kicker">A shot of &gt; <b id="asName">EXERCISE</b></p>
+        <h1 class="display">Run Club.</h1>
+      </div>
+      <div class="stage block stone">
+        <canvas id="preview"></canvas>
+        <div class="tagline"><span></span><i style="font-style:normal" id="asTag">&amp; new sneakers</i></div>
+        <div class="pick"><span>Run as</span><div id="picker" style="display:flex" role="group" aria-label="Pick your shot"></div></div>
+      </div>
+    </div>
+    <p class="lede"><b>Outrun Monday.</b> Tap to jump, hold to go higher. Run 500 m to unlock a code.</p>
+    <button class="btn go" id="play">Play</button>
+    <div class="block mist powers">
+      <h3>Every label line is a power-up</h3>
+      <ul>
+        <li style="--c:var(--energy)"><i></i><b>&amp; a jetpack</b><span>Fly for 4 seconds. Hold to rise.</span></li>
+        <li style="--c:var(--focus)"><i></i><b>&amp; a light bulb moment</b><span>Slow-mo, and the best jumps light up.</span></li>
+        <li style="--c:var(--exercise)"><i></i><b>&amp; new sneakers</b><span>Double jump and a burst of pace.</span></li>
+        <li style="--c:var(--relax)"><i></i><b>&amp; comfy socks</b><span>Shrug off one hit.</span></li>
+        <li style="--c:var(--sleep)"><i></i><b>&amp; sweet dreams</b><span>Night only. A power nap that saves a crash.</span></li>
+      </ul>
+    </div>
+    <div class="board block mist"><h3>Top 10</h3><ol id="board1"></ol></div>
+    <p class="fine">Concept prototype by ABNORMAL for Ryde · 18+ to enter the giveaway · codes are placeholders</p>
+  </div>
+</section>
+
+<section class="screen hidden" id="end">
+  <div class="col">
+    <div class="topbar"><span class="wordmark" aria-label="Ryde">Ryde<i>:</i></span><button class="btn small ghost snd" data-mute>Sound on</button></div>
+    <div class="left">
+      <div class="result">
+        <p class="kicker" id="cause">Wheelie bin: 1. You: 0.</p>
+        <p class="score-big" id="score">0</p>
+        <p class="pts">points</p>
+        <div class="stats"><div><b id="stDist">0 m</b>Distance</div><div><b id="stDots">0</b>Dots</div><div><b id="stBest">0</b>Your best</div></div>
+        <p class="best" id="bestNote"></p>
+      </div>
+      <button class="btn go" id="again">Play again</button>
+    </div>
+    <div class="reward" id="reward"></div>
+    <div class="namerow"><input id="name" maxlength="12" placeholder="YOUR NAME" autocomplete="nickname" enterkeyhint="send" aria-label="Your name for the leaderboard"><button class="btn small" id="post">Post score</button></div>
+    <p class="note" id="note" aria-live="polite"></p>
+    <div class="board block mist"><h3>Top 10</h3><ol id="board2"></ol></div>
+    <a class="shop" href="https://au.ryde.com/" target="_blank" rel="noopener">Shop the range &gt;</a>
+    <p class="fine">Concept prototype by ABNORMAL for Ryde · 18+ to enter the giveaway · codes are placeholders</p>
+  </div>
+</section>
+
+<div id="pause" class="hidden"><div class="card"><p class="display">Paused.</p><button class="btn" id="resume">Keep running</button><button class="btn ghost" id="quit">End run</button></div></div>
+
+<script type="module" src="game.js"></script>
+</body>
+</html>

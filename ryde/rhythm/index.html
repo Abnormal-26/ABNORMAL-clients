@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#D4D0CA">
+<title>Ryde: Your Rhythm</title>
+<meta name="description" content="Right shot, right moment. A rhythm game from Ryde: tap the matching shot as each moment of the day lands on the beat.">
+<meta property="og:title" content="Ryde: Your Rhythm">
+<meta property="og:description" content="Right shot, right moment. Play a day to the beat, post your score, unlock a Black Friday code.">
+<meta property="og:type" content="website">
+<link rel="preload" href="../shared/fonts/inter-tight-latin-900-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="../shared/fonts/inter-tight-latin-800-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="../shared/ui.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas class="play" id="game" aria-label="Your Rhythm game"></canvas>
+
+<!-- START -->
+<section class="screen" id="start">
+  <div class="col">
+    <header class="top">
+      <div class="wordmark">Ryde<i>:</i></div>
+      <button class="mute" type="button" aria-pressed="false"><span class="ico"></span><span class="lbl">Sound on</span></button>
+    </header>
+    <div class="hero"><canvas id="hero" aria-hidden="true"></canvas></div>
+    <div class="titles">
+      <p class="eyebrow">A shot of</p>
+      <h1 class="display">Your<br>rhythm.</h1>
+    </div>
+    <p class="how">Moments of the day drop on the beat. Tap the matching shot as each one hits the line.</p>
+    <button class="btn play-btn" id="play" type="button">Play <span class="chev">&gt;</span></button>
+    <ul class="tiers" aria-label="Rewards">
+      <li style="--c:var(--energy)"><b>Day 1</b>10% off</li>
+      <li style="--c:var(--focus)"><b>Day 2</b>15% off</li>
+      <li style="--c:var(--exercise)"><b>Day 3</b>20% off + the draw</li>
+    </ul>
+    <div class="board block mist"><h3>Top 10 this week</h3><ol id="board1"><li class="empty">Loading…</li></ol></div>
+    <p class="fine">Concept prototype by ABNORMAL for Ryde · 18+ to enter the giveaway · codes are placeholders</p>
+  </div>
+</section>
+
+<!-- PAUSE -->
+<section class="screen hidden overlay" id="pause">
+  <div class="col">
+    <p class="eyebrow">Hold that thought</p>
+    <h2 class="display">Paused.</h2>
+    <button class="btn" id="resume" type="button">Resume</button>
+    <button class="btn ghost" id="quit" type="button">End run</button>
+    <div class="row pause-row">
+      <button class="mute" type="button" aria-pressed="false"><span class="ico"></span><span class="lbl">Sound on</span></button>
+      <button class="timing-btn" id="timingBtn" type="button">Timing &gt;</button>
+    </div>
+  </div>
+</section>
+
+<!-- TIMING (calibration) -->
+<section class="screen hidden overlay" id="timing">
+  <div class="col">
+    <p class="eyebrow">Timing</p>
+    <h2 class="display">Tap along.</h2>
+    <p class="how">Four clicks count you in, then tap the circle on each of the next 8 beats. We'll line the game up with your ears and thumb.</p>
+    <button class="calpad" id="calPad" type="button" aria-label="Tap on the beat"><span id="calCount">Start</span></button>
+    <p class="note" id="calNote"></p>
+    <div class="row cal-row">
+      <button class="btn ghost small" id="calReset" type="button">Reset to auto</button>
+      <button class="btn small" id="calDone" type="button">Done</button>
+    </div>
+  </div>
+</section>
+
+<!-- END -->
+<section class="screen hidden" id="end">
+  <div class="col">
+    <header class="top">
+      <div class="wordmark">Ryde<i>:</i><small>your rhythm</small></div>
+      <button class="mute" type="button" aria-pressed="false"><span class="ico"></span><span class="lbl">Sound on</span></button>
+    </header>
+    <div class="endhero" id="endhero">
+      <p class="kicker" id="endEyebrow">Out of rhythm on Day 1</p>
+      <p class="score-big" id="endScore">0</p>
+      <div class="stats">
+        <div><b id="stDay">1</b>Day reached</div>
+        <div><b id="stCombo">0</b>Best combo</div>
+        <div><b id="stPerf">0%</b>Perfect</div>
+      </div>
+      <p class="best" id="endBest"></p>
+    </div>
+    <div class="reward" id="reward"></div>
+    <button class="btn" id="again" type="button">Play again <span class="chev">&gt;</span></button>
+    <form class="namerow" id="postForm" autocomplete="off">
+      <input id="name" name="name" maxlength="12" placeholder="YOUR NAME" aria-label="Your name for the leaderboard" enterkeyhint="send">
+      <button class="btn small" id="post" type="submit">Post score</button>
+    </form>
+    <p class="note" id="postNote"></p>
+    <div class="board block mist"><h3>Top 10 this week</h3><ol id="board2"></ol></div>
+    <a class="shop" href="https://au.ryde.com/" target="_blank" rel="noopener">Shop the range</a>
+    <p class="fine">Concept prototype by ABNORMAL for Ryde · 18+ to enter the giveaway · codes are placeholders</p>
+  </div>
+</section>
+
+<script type="module" src="game.js"></script>
+</body>
+</html>
