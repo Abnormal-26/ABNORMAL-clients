@@ -32,9 +32,12 @@ export const PAL = {
   night: { sky: "#1C1630", sun: "#F4F1FA", sunR: 52, sunY: 0.15, far: "#292142", mid0: "#3A2F57", mid1: "#2A2240", mid2: "#5C4183", win0: "#FFC845", win1: "#8564AB", win2: "#FFE08F", near: "#3A3152", pave: "#4A425E", joint: "#433B56", kerb: "#8564AB", road: "#141120", lane: "#8564AB", alley: "#0A0811", roof: "#2E2645", roofTop: "#4A425E", roofWin: "#FFC845", hud: "#FFFFFF", dark: 1, stars: 1, lawn: 0, accent: "#8564AB", tree: "#5C4183", tree2: "#3A2F57" },
 };
 /** Palette for a distance: the current part of the day blended into the next over its last 50 m. */
+const PREDAWN = { sky: "#8564AB", sun: "#FF7A6E", sunR: 80, sunY: 0.68, far: "#7353A0", mid0: "#5C4183", mid1: "#4A3570", mid2: "#B79BD6", win0: "#FFC845", win1: "#B79BD6", win2: "#FFE08F", near: "#6E5596", pave: "#9C8FB4", joint: "#8E80A8", kerb: "#FFFFFF", road: "#241C33", lane: "#B79BD6", alley: "#140F1D", roof: "#5C4183", roofTop: "#9C8FB4", roofWin: "#FFC845", hud: "#FFFFFF", dark: 0.6, stars: 0.4, lawn: 0, accent: "#FF7A6E", tree: "#5C4183", tree2: "#3A2F57" };
+function blend(A, B, f) { const o = {}; for (const k in A) o[k] = typeof A[k] === "number" ? A[k] + (B[k] - A[k]) * f : mix(A[k], B[k], f); return o; }
 export function paletteAt(m) {
   const d = dayAt(m), A = PAL[d.id], B = PAL[d.next];
   if (d.f <= 0) return { ...A, dayId: d.id, dayName: d.name, dayI: d.i };
+  if (d.id === "night" && d.next === "dawn") return { ...(d.f < 0.5 ? blend(A, PREDAWN, d.f * 2) : blend(PREDAWN, B, d.f * 2 - 1)), dayId: d.id, dayName: d.name, dayI: d.i };
   const o = { dayId: d.id, dayName: d.name, dayI: d.i };
   for (const k in A) o[k] = typeof A[k] === "number" ? A[k] + (B[k] - A[k]) * d.f : mix(A[k], B[k], d.f);
   return o;
@@ -195,7 +198,7 @@ function bulb(ctx, x, y, a, t) {
 // each draws with its left edge at x and its base at yb (screen y, up is negative)
 const LIDS = ["#FFC845", "#EE3831"];
 const SIGNS = [["MONDAY"], ["MONDAY"], ["REPLY", "ALL"], ["8AM"], ["MONDAY"]];
-const BANNERS = [["GRAND OPENING", "#FFC845"], ["SALE ON NOW", "#EE3831"], ["FREE WI-FI", "#6A9EF0"], ["BRUNCH IS BACK", "#06AF9A"]];
+const BANNERS = [["GRAND OPENING"], ["SALE ON NOW"], ["FREE WI-FI"], ["BRUNCH IS BACK"]];
 export const signText = (it) => SIGNS[Math.floor(it.var * SIGNS.length)];
 export const bannerOf = (it) => BANNERS[Math.floor(it.var * BANNERS.length)];
 
@@ -208,7 +211,7 @@ export function drawOb(ctx, it, x, yb, t, P) {
     case "puddle": return puddle(ctx, x, yb, it.w, t);
     case "scooter": return scooter(ctx, x, yb, it.w, it.h, t, P && P.dark > 0.4);
     case "pigeon": return pigeon(ctx, x, -pigeonY(it, t), it.w, t, P && P.dark > 0.4);
-    case "banner": return banner(ctx, x, yb, it, t);
+    case "banner": return banner(ctx, x, yb, it, t, P);
   }
 }
 function cone(ctx, x, yb, w, h) {
@@ -237,7 +240,7 @@ function aframe(ctx, x, yb, w, h, lines) {
   ctx.fillStyle = "#131313"; rr(ctx, x + 5, yb - h + 3, w - 10, h - 15, 2); ctx.fill();
   ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
   const n = lines.length, mid = yb - h + 3 + (h - 15) / 2;
-  for (let i = 0; i < n; i++) { fitFont(ctx, 900, n > 1 ? 13.5 : 14, lines[i], w - 20, 8); ctx.fillText(lines[i], x + w / 2, mid - 2 + (i - (n - 1) / 2) * 15); }
+  for (let i = 0; i < n; i++) { fitFont(ctx, 900, 17, lines[i], w - 18, 16.5); ctx.fillText(lines[i], x + w / 2, mid - 2 + (i - (n - 1) / 2) * 18); }
   ctx.fillStyle = "#EE3831"; ctx.fillRect(x + 11, yb - 20, w - 22, 2.5);
 }
 function paper(ctx, x, yb, w, h, v, t) {
@@ -257,25 +260,33 @@ function paper(ctx, x, yb, w, h, v, t) {
   ctx.strokeStyle = INK; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.moveTo(x + 8, y + 1); ctx.lineTo(x + 8, y + 9); ctx.stroke();
 }
 function puddle(ctx, x, yb, w, t) {
-  const r = SHOT.relax;
-  ctx.fillStyle = r.color; ctx.beginPath(); ctx.ellipse(x + w / 2, yb - 1.5, w / 2, 4.5, 0, 0, 7); ctx.fill();
-  ctx.fillStyle = r.light; ctx.beginPath(); ctx.ellipse(x + w * 0.4, yb - 2.5, w * 0.22, 1.6, 0, 0, 7); ctx.fill();
-  const p = (t * 0.9) % 1; ctx.strokeStyle = rgba("#FFFFFF", 0.7 * (1 - p)); ctx.lineWidth = 1.2;
-  ctx.beginPath(); ctx.ellipse(x + w * 0.62, yb - 1.5, 4 + p * w * 0.18, 1 + p * 2.4, 0, 0, 7); ctx.stroke();
+  const c = "#2A3242";
+  ctx.fillStyle = c; ctx.beginPath();
+  ctx.ellipse(x + w * 0.42, yb - 1.8, w * 0.42, 4.6, 0, 0, 7); ctx.ellipse(x + w * 0.74, yb - 1.4, w * 0.26, 3.6, 0.05, 0, 7); ctx.ellipse(x + w * 0.16, yb - 1.2, w * 0.15, 3, -0.05, 0, 7); ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.55)"; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.ellipse(x + w * 0.42, yb - 1.8, w * 0.42, 4.6, 0, Math.PI * 1.08, Math.PI * 1.9); ctx.stroke();
+  ctx.fillStyle = "rgba(255,255,255,0.75)"; rr(ctx, x + w * 0.22, yb - 3.4, w * 0.2, 1.6, 0.8); ctx.fill(); rr(ctx, x + w * 0.5, yb - 2.6, w * 0.1, 1.3, 0.6); ctx.fill();
+  // splash: a few drops hopping up off the surface
+  const p = (t * 1.6) % 1;
+  for (let i = 0; i < 3; i++) { const q = (p + i / 3) % 1, dx = x + w * (0.3 + i * 0.2), hgt = Math.sin(q * Math.PI) * 10; ctx.fillStyle = `rgba(169,200,247,${0.9 * (1 - q)})`; ctx.beginPath(); ctx.arc(dx + (i - 1) * q * 6, yb - 4 - hgt, 1.8, 0, 7); ctx.fill(); }
 }
 function scooter(ctx, x, yb, w, h, t, night) {
-  const ex = SHOT.exercise;
+  const red = SHOT.energy;
   // speed streaks behind (it's heading left, straight at you)
-  ctx.strokeStyle = night ? "rgba(255,255,255,0.4)" : "rgba(19,19,19,0.28)"; ctx.lineWidth = 2; ctx.lineCap = "round";
+  ctx.strokeStyle = night ? "rgba(255,255,255,0.45)" : "rgba(19,19,19,0.28)"; ctx.lineWidth = 2; ctx.lineCap = "round";
   for (let i = 0; i < 3; i++) { const yy = yb - 14 - i * 12, o = ((t * 90 + i * 13) % 14); ctx.beginPath(); ctx.moveTo(x + w + 4 + o, yy); ctx.lineTo(x + w + 16 + o, yy); ctx.stroke(); }
-  // headlight beam
   ctx.fillStyle = night ? "rgba(255,232,170,0.42)" : "rgba(255,200,69,0.28)"; ctx.beginPath(); ctx.moveTo(x + 8, yb - h + 15); ctx.lineTo(x - 26, yb - h + 6); ctx.lineTo(x - 26, yb - h + 30); ctx.closePath(); ctx.fill();
-  ctx.strokeStyle = INK; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(x + 14, yb - 9); ctx.lineTo(x + 8, yb - h + 4); ctx.stroke();
-  ctx.lineWidth = 3.4; ctx.beginPath(); ctx.moveTo(x + 2, yb - h + 3); ctx.lineTo(x + 16, yb - h + 5); ctx.stroke();
-  ctx.fillStyle = ex.color; rr(ctx, x + 10, yb - 13, w - 16, 6, 2.5); ctx.fill();
-  ctx.fillStyle = INK; ctx.fillRect(x + 12, yb - 8, w - 20, 2);
-  ctx.strokeStyle = INK; ctx.lineWidth = 2.4; ctx.beginPath(); ctx.arc(x + w - 9, yb - 6, 8, Math.PI * 1.05, Math.PI * 1.75); ctx.stroke();
-  for (const wx of [x + 9, x + w - 9]) { ctx.fillStyle = INK; ctx.beginPath(); ctx.arc(wx, yb - 6, 6, 0, 7); ctx.fill(); ctx.fillStyle = "#B9B4AD"; ctx.beginPath(); ctx.arc(wx, yb - 6, 2.2, 0, 7); ctx.fill(); }
+  const shape = (halo) => {
+    const e = halo ? 3.2 : 0; const col = halo ? "#FFFFFF" : INK;
+    ctx.strokeStyle = col; ctx.lineCap = "round"; ctx.lineWidth = 4 + e; ctx.beginPath(); ctx.moveTo(x + 14, yb - 9); ctx.lineTo(x + 8, yb - h + 4); ctx.stroke();
+    ctx.lineWidth = 3.4 + e; ctx.beginPath(); ctx.moveTo(x + 2, yb - h + 3); ctx.lineTo(x + 16, yb - h + 5); ctx.stroke();
+    ctx.fillStyle = halo ? col : INK; rr(ctx, x + 10 - e / 2, yb - 13 - e / 2, w - 16 + e, 7 + e, 3); ctx.fill();
+    ctx.lineWidth = 2.4 + e; ctx.beginPath(); ctx.arc(x + w - 9, yb - 6, 8, Math.PI * 1.05, Math.PI * 1.75); ctx.stroke();
+    for (const wx of [x + 9, x + w - 9]) { ctx.fillStyle = halo ? col : INK; ctx.beginPath(); ctx.arc(wx, yb - 6, 6 + e / 2, 0, 7); ctx.fill(); }
+  };
+  if (night) shape(true);
+  shape(false);
+  ctx.fillStyle = red.color; ctx.fillRect(x + 13, yb - 12, w - 22, 2.6);
+  for (const wx of [x + 9, x + w - 9]) { ctx.fillStyle = "#B9B4AD"; ctx.beginPath(); ctx.arc(wx, yb - 6, 2.2, 0, 7); ctx.fill(); }
   ctx.fillStyle = "#FFC845"; ctx.beginPath(); ctx.arc(x + 8.5, yb - h + 15, 3.4, 0, 7); ctx.fill();
 }
 function pigeon(ctx, x, yTop, w, t, night) {
@@ -294,19 +305,19 @@ function pigeon(ctx, x, yTop, w, t, night) {
   ctx.save(); ctx.translate(cx + 1, cy - 3); ctx.rotate(-0.25 + fl * 0.85);
   ctx.fillStyle = "#77736D"; ctx.beginPath(); ctx.moveTo(-4, 0); ctx.quadraticCurveTo(6, -16, 14, -9); ctx.quadraticCurveTo(8, -3, 6, 1); ctx.closePath(); ctx.fill(); ctx.restore();
 }
-function banner(ctx, x, yb, it, t) {
-  const [text, col] = bannerOf(it), y0 = yb - OB.banner.hang - it.h, sway = Math.sin(t * 2.2 + it.var * 5) * 1.2;
-  // cables fade out as they rise, so they never run through the HUD
-  const cg = ctx.createLinearGradient(0, y0, 0, y0 - 170); cg.addColorStop(0, INK); cg.addColorStop(1, "rgba(19,19,19,0)");
-  ctx.strokeStyle = cg; ctx.lineWidth = 1.4;
+function banner(ctx, x, yb, it, t, P) {
+  // hazards never wear the time of day's colour: an ink banner on light skies, a white one on dark skies
+  const sk = rgbOf(P ? P.sky : "#FFFFFF"), dark = (0.2126 * sk[0] + 0.7152 * sk[1] + 0.0722 * sk[2]) / 255 < 0.45;
+  const fill = dark ? "#FFFFFF" : INK, ink = dark ? INK : "#FFFFFF";
+  const [text] = bannerOf(it), y0 = yb - OB.banner.hang - it.h, sway = Math.sin(t * 2.2 + it.var * 5) * 1.2;
+  const cg = ctx.createLinearGradient(0, y0, 0, y0 - 170); cg.addColorStop(0, fill === INK ? INK : "#FFFFFF"); cg.addColorStop(1, fill === INK ? "rgba(19,19,19,0)" : "rgba(255,255,255,0)");
+  ctx.strokeStyle = cg; ctx.lineWidth = 1.6;
   ctx.beginPath(); ctx.moveTo(x + 6, y0); ctx.lineTo(x + 6 + sway, y0 - 170); ctx.moveTo(x + it.w - 6, y0); ctx.lineTo(x + it.w - 6 + sway, y0 - 170); ctx.stroke();
-  ctx.fillStyle = INK; ctx.fillRect(x - 2, y0 - 3, it.w + 4, 3.5);
-  ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x + it.w, y0); ctx.lineTo(x + it.w, y0 + it.h);
-  // pennant-cut bottom edge
-  const n = Math.max(4, Math.round(it.w / 22)); for (let i = n; i >= 0; i--) ctx.lineTo(x + (it.w * i) / n, y0 + it.h - (i % 2 ? 5 : 0));
-  ctx.closePath(); ctx.fill();
-  ctx.fillStyle = INK; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  fitFont(ctx, 900, 16, text, it.w - 14, 9); ctx.fillText(text, x + it.w / 2, y0 + it.h / 2 - 2);
+  const path = () => { ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x + it.w, y0); ctx.lineTo(x + it.w, y0 + it.h); const n = Math.max(4, Math.round(it.w / 22)); for (let i = n; i >= 0; i--) ctx.lineTo(x + (it.w * i) / n, y0 + it.h - (i % 2 ? 6 : 0)); ctx.closePath(); };
+  path(); ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = ink; ctx.lineWidth = 2.5; ctx.lineJoin = "round"; ctx.stroke();
+  ctx.fillStyle = SHOT.energy.color; ctx.fillRect(x + 6, y0 + 5, it.w - 12, 3);
+  ctx.fillStyle = ink; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  fitFont(ctx, 900, 20, text, it.w - 16, 14); ctx.fillText(text, x + it.w / 2, y0 + it.h / 2 + 1);
 }
 
 /** FOCUS: outline a hazard in light-bulb yellow. */
@@ -324,9 +335,10 @@ export function drawHint(ctx, x, yb, kind, t, fs) {
   ctx.fillStyle = rgba(f.color, 0.25 + 0.2 * p); ctx.beginPath(); ctx.ellipse(x, yb, 22 + p * 4, 6, 0, 0, 7); ctx.fill();
   ctx.fillStyle = f.color; ctx.beginPath(); ctx.ellipse(x, yb, 9, 3, 0, 0, 7); ctx.fill();
   ctx.strokeStyle = f.color; ctx.lineWidth = 3; ctx.lineCap = "round"; ctx.lineJoin = "round";
-  const ay = yb - 18 - p * 4; ctx.beginPath(); ctx.moveTo(x - 7, ay + 6); ctx.lineTo(x, ay); ctx.lineTo(x + 7, ay + 6); ctx.stroke();
+  const low = kind === "LOW", label = low ? "STAY LOW" : kind;
+  const ay = yb - 18 - p * 4; ctx.beginPath(); if (low) { ctx.moveTo(x - 7, ay); ctx.lineTo(x, ay + 6); ctx.lineTo(x + 7, ay); } else { ctx.moveTo(x - 7, ay + 6); ctx.lineTo(x, ay); ctx.lineTo(x + 7, ay + 6); } ctx.stroke();
   ctx.font = `900 ${fs}px ${FONT}`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  const tw = ctx.measureText(kind).width + fs * 1.1, ph = fs * 1.7, py = ay - 6 - ph / 2;
+  kind = label; const tw = ctx.measureText(kind).width + fs * 1.1, ph = fs * 1.7, py = ay - 6 - ph / 2;
   ctx.fillStyle = f.color; rr(ctx, x - tw / 2, py - ph / 2, tw, ph, ph / 2); ctx.fill();
   ctx.fillStyle = INK; ctx.fillText(kind, x, py + 1);
   ctx.restore();
@@ -334,17 +346,43 @@ export function drawHint(ctx, x, yb, kind, t, fs) {
 
 /** Power-up: the floating bottle with its label line in a pill. fs = font size in world units (≥12 px on screen). */
 export function drawPower(ctx, id, x, yb, t, fs) {
-  const s = SHOT[id], bob = Math.sin(t * 3.2) * 4, cy = yb - 30 - 23 + bob;
+  const s = SHOT[id], bob = Math.sin(t * 3.2) * 4, cy = yb - 54 + bob, r = 25;
   ctx.fillStyle = "rgba(0,0,0,0.12)"; ctx.beginPath(); ctx.ellipse(x, yb - 1, 13 - bob * 0.6, 3, 0, 0, 7); ctx.fill();
   const p = (t * 1.4) % 1;
-  ctx.strokeStyle = rgba(s.color, 0.55 * (1 - p)); ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, cy, 26 + p * 16, 0, 7); ctx.stroke();
-  ctx.fillStyle = rgba(s.light, 0.45); ctx.beginPath(); ctx.arc(x, cy, 27, 0, 7); ctx.fill();
-  drawBottle(ctx, x, cy, 46, id, { tilt: Math.sin(t * 2.4) * 0.12, shadow: false });
+  ctx.strokeStyle = rgba(s.color, 0.55 * (1 - p)); ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, cy, r + 3 + p * 16, 0, 7); ctx.stroke();
+  ctx.fillStyle = s.color; ctx.beginPath(); ctx.arc(x, cy, r, 0, 7); ctx.fill();
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, cy, r, 0, 7); ctx.stroke();
+  ctx.save(); ctx.translate(x, cy); ctx.rotate(Math.sin(t * 2.4) * 0.1); drawIcon(ctx, id, t); ctx.restore();
   ctx.font = `800 ${fs}px ${FONT}`; ctx.textBaseline = "middle"; ctx.textAlign = "center";
-  const tw = ctx.measureText(s.tag).width + fs * 1.3, ph = fs * 1.9, py = cy - 46 - ph / 2;
+  const tw = ctx.measureText(s.tag).width + fs * 1.3, ph = fs * 1.9, py = cy - r - 12 - ph / 2;
   ctx.fillStyle = s.color; rr(ctx, x - tw / 2, py - ph / 2, tw, ph, ph / 2); ctx.fill();
   ctx.fillStyle = id === "sleep" ? "#fff" : INK; ctx.fillText(s.tag, x, py + 1);
   ctx.beginPath(); ctx.moveTo(x - 5, py + ph / 2 - 0.5); ctx.lineTo(x, py + ph / 2 + 5); ctx.lineTo(x + 5, py + ph / 2 - 0.5); ctx.fillStyle = s.color; ctx.fill();
+}
+/** The label lines as icons, ~34 units across, centred on 0,0: a jetpack, a light bulb, a sneaker, a sock, a moon. */
+export function drawIcon(ctx, id, t) {
+  ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.strokeStyle = INK; ctx.lineWidth = 1.6;
+  if (id === "energy") {
+    for (const dx of [-6, 6]) { const fl = 7 + Math.sin(t * 40 + dx) * 2; ctx.fillStyle = "#FFC845"; ctx.beginPath(); ctx.moveTo(dx - 3.4, 9); ctx.quadraticCurveTo(dx, 9 + fl * 1.4, dx + 3.4, 9); ctx.fill(); }
+    for (const dx of [-6, 6]) { ctx.fillStyle = "#fff"; rr(ctx, dx - 5, -13, 10, 22, 4); ctx.fill(); ctx.stroke(); ctx.fillStyle = INK; rr(ctx, dx - 3, 8, 6, 3.5, 1); ctx.fill(); }
+    ctx.fillStyle = "#FFC845"; ctx.beginPath(); ctx.moveTo(1.5, -9); ctx.lineTo(-2.5, -1); ctx.lineTo(0.5, -1); ctx.lineTo(-1.5, 6); ctx.lineTo(3, -3); ctx.lineTo(0, -3); ctx.closePath(); ctx.fill(); ctx.lineWidth = 0.8; ctx.stroke();
+  } else if (id === "focus") {
+    ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(0, -4, 10, Math.PI * 0.8, Math.PI * 2.2); ctx.lineTo(4, 7); ctx.lineTo(-4, 7); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#B9B4AD"; rr(ctx, -4.5, 7, 9, 6, 1.5); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-3, -3); ctx.lineTo(0, 1); ctx.lineTo(3, -3); ctx.moveTo(0, 1); ctx.lineTo(0, 7); ctx.stroke();
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.2; for (let i = 0; i < 5; i++) { const a = -Math.PI / 2 + (i - 2) * 0.62; ctx.beginPath(); ctx.moveTo(Math.cos(a) * 14, -4 + Math.sin(a) * 14); ctx.lineTo(Math.cos(a) * 18, -4 + Math.sin(a) * 18); ctx.stroke(); }
+  } else if (id === "exercise") {
+    ctx.save(); ctx.scale(1.45, 1.45); ctx.translate(-2.5, 3); sneaker(ctx, 0, 0, 0, { shot: "exercise", kicks: false }, false); ctx.restore();
+  } else if (id === "relax") {
+    ctx.fillStyle = "#fff";
+    ctx.beginPath(); ctx.moveTo(-6, -14); ctx.lineTo(4, -14); ctx.lineTo(4, 2); ctx.quadraticCurveTo(13, 2, 13, 8); ctx.quadraticCurveTo(13, 13, 6, 13); ctx.lineTo(-2, 13); ctx.quadraticCurveTo(-6, 13, -6, 8); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = SHOT.relax.dark; ctx.fillRect(-5.2, -8, 8.4, 2.4); ctx.fillRect(-5.2, -3.5, 8.4, 2.4);
+    ctx.fillStyle = "#fff"; for (const dx of [-5, -1, 3]) { ctx.beginPath(); ctx.arc(dx, -14, 2.6, 0, 7); ctx.fill(); }
+  } else if (id === "sleep") {
+    ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(-2, 1, 12, 0, 7); ctx.fill();
+    ctx.fillStyle = SHOT.sleep.color; ctx.beginPath(); ctx.arc(4, -4, 10.5, 0, 7); ctx.fill();
+    ctx.fillStyle = "#fff"; ctx.font = `900 9px ${FONT}`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("z", 8, -8); ctx.font = `900 6.5px ${FONT}`; ctx.fillText("z", 13, -13);
+  }
 }
 
 /** km marker: a lollipop sign, a flat brand circle on an ink pole. */
@@ -378,7 +416,7 @@ export function createCity(seed) {
     }
     if (li === 1) {
       if (park && R() < 0.75) { const w = 70 + R() * 50; return { x, w, h: 120 + R() * 90, kind: R() < 0.5 ? "tree" : "tree2", gap: 4 + R() * 20, r: R(), tone: 0 }; }
-      if (!park && R() < 0.07) return { x, w: 132, h: 230 + R() * 60, kind: "billboard", gap: 30 + R() * 30, r: R(), tone: 2 };
+      if (!park && R() < 0.045) return { x, w: 132, h: 230 + R() * 60, kind: "billboard", gap: 30 + R() * 30, r: R(), tone: 2 };
       const w = 62 + R() * 76, h = (90 + R() * 190) * (0.7 + 0.3 * sk);
       const kinds = ["stripes", "grid", "arch", "stripes", "grid", "split"];
       return { x, w, h, kind: kinds[Math.floor(R() * kinds.length)], gap: 4 + R() * 26, r: R(), tone: R() < 0.16 ? 2 : R() < 0.55 ? 0 : 1, lit: night };
@@ -426,7 +464,7 @@ function drawMid(ctx, it, x, P, t) {
     return;
   }
   if (it.kind === "billboard") {
-    ctx.fillStyle = P.mid1 === "#FFFFFF" ? "#131313" : P.mid1; ctx.fillRect(x + 22, -h + 50, 5, h - 50); ctx.fillRect(x + w - 27, -h + 50, 5, h - 50);
+    ctx.fillStyle = P.near; ctx.fillRect(x + 22, -h + 50, 5, h - 50); ctx.fillRect(x + w - 27, -h + 50, 5, h - 50);   // poles in a background tone, never read as a hazard
     ctx.fillStyle = P.accent; ctx.fillRect(x, -h, w, 60);
     drawWordmark(ctx, x + 12, -h + 38, 30, P.accent === "#8564AB" ? "#fff" : INK, true);
     ctx.fillStyle = P.dark > 0.5 ? "#fff" : INK; ctx.beginPath(); ctx.arc(x + w - 22, -h + 30, 12, 0, 7); ctx.fill();
@@ -465,7 +503,7 @@ function drawNear(ctx, it, x, P, t) {
 /** The day's moments, straight off the range: giant type in the sky. */
 export const MOMENT = { dawn: ["Jump", "start."], morning: ["Head", "down."], midday: ["Get", "moving."], dusk: ["Unwind."], night: ["Lights", "out."] };
 function momentType(ctx, w, topY, hudU, P, words, alpha) {
-  const sky = -topY; if (sky < 380 || alpha <= 0) return;
+  const sky = -topY; if (sky < 440 || alpha <= 0) return;
   let size = 150; ctx.font = `900 ${size}px ${FONT}`;
   const widest = Math.max(...words.map((l) => ctx.measureText(l).width)); size = Math.min(150, Math.floor((size * w * 0.84) / widest), sky * 0.17);
   ctx.font = `900 ${size}px ${FONT}`; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";

@@ -5,7 +5,7 @@
  *   make "Wellbeing In One Shot." (both vanish, big bonus). Anything resting over the fill line for
  *   2 s caps the bottle and ends the run.
  *
- * QC hooks — window.__game (bottle units: interior is 10 wide × 14 deep, y grows downward,
+ * QC hooks — window.__game (bottle units: interior is 10 wide × 13 deep, y grows downward,
  * y = 0 is the mouth, the fill line is at y = 1.6):
  *   state()          → { phase, score, pieces, highestTier, overLineTime, merges, bestChain, combo, drops,
  *                         current, next, discovered[], asleep, maxOverlap, seed, time, wellbeing, dpr }
@@ -28,15 +28,17 @@ import { TIERS, tierInfo, blit, clearSprites, warm } from "./pieces.js";
 import { createSound } from "./sound.js";
 
 // ---------- geometry (bottle units) ----------
-const BW = 10, BH = 14, FILL = 1.6, CORNER = 1.25, WALL = 0.34;
-const R1 = 0.6, K = 1.27, RAD = (t) => R1 * Math.pow(K, t - 1);
+const BW = 10, BH = 13, FILL = 1.6, CORNER = 1.25, WALL = 0.34;
+// size curve tuned with bots so a Your Day (5.4u) leaves room for a second one: a Wellbeing is rare but real
+const R1 = 0.6, K = 1.24, RAD = (t) => R1 * Math.pow(K, t - 1);
 const CAP_W = 2.5, CAP_H = 0.95, CAP_BOT = -2.62;
 const VIEW = { l: -WALL - 0.25, r: BW + WALL + 0.25, t: -3.8, b: BH + WALL + 0.6 };
-const DT = 1 / 60, COOLDOWN = 0.42, CHAIN = 1.0, OVER_LIMIT = 2.0, WELLBEING_BONUS = 1000;
+const MIN_POST = 50, DT = 1 / 60, COOLDOWN = 0.42, CHAIN = 1.0, OVER_LIMIT = 2.0, WELLBEING_BONUS = 1000;
 const REWARDS = [
-  { at: 1000, code: "DROP10", off: "10% off the range" },
-  { at: 2500, code: "DROP15", off: "15% off the range" },
-  { at: 5000, code: "DROP20", off: "20% off the range", extra: "+ you're in the draw for a year of Ryde" },
+  // thresholds from 120 greedy-bot runs at 1.6 s/drop: 90% / 55% / 10% reach them (tier 3 ≈ "make a Wellbeing")
+  { at: 1150, code: "DROP10", off: "10% off the range" },
+  { at: 1600, code: "DROP15", off: "15% off the range" },
+  { at: 4000, code: "DROP20", off: "20% off the range", extra: "+ you're in the draw for a year of Ryde" },
 ];
 const HELD_NOTE = "That name needs a quick human check before it goes on the board. Your score is saved.";
 const tri = (k) => (k * (k + 1)) / 2;
@@ -55,7 +57,8 @@ function setSeed(n) { seed = n | 0; rs = seed; }
 
 // ---------- DOM / services ----------
 const $ = (id) => document.getElementById(id);
-const cv = $("cv"), ctx = cv.getContext("2d");
+const cv = $("cv");
+let ctx = cv.getContext("2d");          // swapped temporarily while drawing into an offscreen cache (see cached())
 const audio = createAudio(), sound = createSound(audio);
 const board = createBoard("ryde-drop");
 const FINE = matchMedia("(hover: hover) and (pointer: fine)").matches;
@@ -68,7 +71,7 @@ const mkCanvas = (w, h) => Object.assign(document.createElement("canvas"), { wid
 // Layout: portrait column (HUD on top, discovery strip below) or, on wide screens, the
 // bottle in a white centre column with stone side panels carrying the HUD.
 // =====================================================================================
-let dprCap = 2;                         // lowered automatically if frames run slow (see frame())
+let dprCap = 2;                         // lowered (to 1.5 at the lowest) if frames run slow, see frame()
 function layout() {
   const W = innerWidth, H = innerHeight, dpr = Math.min(dprCap, window.devicePixelRatio || 1), ins = safeInsets();
   cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); cv.style.width = W + "px"; cv.style.height = H + "px";
@@ -76,7 +79,7 @@ function layout() {
   const l = { W, H, dpr, ins, wide: W > H * 1.05 };
   if (!l.wide) {
     const colW = Math.min(W, 480), colX = (W - colW) / 2;
-    const top = ins.t + 10, hudH = 62, stripH = 62;
+    const top = ins.t + 10, hudH = 62, stripH = 84;
     const areaT = top + hudH, areaB = H - ins.b - 10 - stripH;
     const s = Math.min((colW - 16 - ins.l - ins.r) / vw, (areaB - areaT) / vh);
     Object.assign(l, { s, colX, colW });
@@ -84,9 +87,10 @@ function layout() {
     l.oy = areaT + Math.max(0, (areaB - areaT - vh * s) * 0.22) - VIEW.t * s;
     l.hud = { x0: colX + Math.max(18, ins.l + 12), x1: colX + colW - Math.max(16, ins.r + 12), y0: top };
     const below = l.oy + (BH + WALL + 0.5) * s;            // bottom of the bottle's floor shadow
-    l.strip = { cx: colX + colW / 2, cy: Math.min(H - ins.b - 10 - 16, below + 40), w: Math.min(colW - 32, 420) };
-    l.strip.capY = l.strip.cy - 27;
+    const sw = Math.min(colW - 24, 420);
+    l.strip = { x0: colX + (colW - sw) / 2, w: sw, y0: Math.min(H - ins.b - 6 - stripH, below + 6), h: stripH };
     l.pause = { x: l.hud.x1 - 44, y: top + 4 };
+    l.hudBottom = top + hudH;                                // taps above this never drop; drags up here cancel
   } else {
     const avail = H - ins.t - ins.b - 20;
     const s = Math.min(avail / vh, (W * 0.44) / vw);
@@ -99,22 +103,28 @@ function layout() {
     l.right = { x0: l.colX + colW + pad, x1: W - Math.max(ins.r, 0) - pad };
     l.pad = pad;
     l.pause = { x: l.right.x1 - 44, y: ins.t + pad };
+    const ph = clamp(H * 0.075, 40, 56);
+    l.next = { x: l.right.x0, y: ins.t + pad, w: Math.min(l.right.x1 - l.right.x0 - 56, ph * 2.1), h: ph };
+    l.hudBottom = ins.t + 4;                                 // no HUD above the bottle in this layout
   }
+  // dragging up past here cancels the drop: into the HUD in portrait, above the cap on wide screens
+  l.cancelY = l.wide ? l.oy + (CAP_BOT - CAP_H) * l.s - 8 : l.hudBottom;
   L = l;
-  clearSprites(); setBottle(null); dropOld();
+  clearSprites(); resetBottle(); for (const k in caches) caches[k].key = null;
   for (let t = 1; t <= 8; t++) warm(t, RAD(t) * l.s, dpr);   // in-bottle sizes, so big merges never hitch
   // page colour behind the canvases: white, with stone either side of the play column
   const a = Math.round(l.colX), b = Math.round(l.colX + l.colW);
   document.body.style.background = a > 0 ? `linear-gradient(90deg, ${STONE} 0 ${a}px, ${PAPER} ${a}px ${b}px, ${STONE} ${b}px)` : PAPER;
   const pb = $("pause"); pb.style.left = l.pause.x + "px"; pb.style.top = l.pause.y + "px";
-  if (G) G.dragging = false;
+  if (G) { G.dragging = false; G.cancel = false; }
 }
 const X = (x) => L.ox + x * L.s, Y = (y) => L.oy + y * L.s;
 
 // =====================================================================================
 // The bottle: walls + interior drawn once into a cache per band colour.
 // =====================================================================================
-const bottle = { cache: null, band: -1, old: null, fade: 1 };
+const bottle = { cache: null, bands: {}, shown: 0 };
+const capCache = new Map();
 function wallPath() {
   const p = new Path2D(), o = WALL, R = CORNER + o, lip = o / 2;
   p.moveTo(-o, 0); p.lineTo(-o, BH + o - R); p.arcTo(-o, BH + o, -o + R, BH + o, R);
@@ -130,13 +140,12 @@ function interiorPath() {
   return p;
 }
 function metalStops(g, stops) { stops.forEach(([t, c]) => g.addColorStop(t, c)); return g; }
-function buildBottle(bandTier) {
+function buildBottle() {
   const s = L.s, dpr = L.dpr, x0 = VIEW.l, y0 = -0.4;
   const w = Math.ceil((VIEW.r - x0) * s * dpr), h = Math.ceil((VIEW.b - y0) * s * dpr);
   const c = mkCanvas(w, h), g = c.getContext("2d");
   const unit = () => g.setTransform(s * dpr, 0, 0, s * dpr, -x0 * s * dpr, -y0 * s * dpr);
   const px = () => g.setTransform(dpr, 0, 0, dpr, -x0 * s * dpr, -y0 * s * dpr);
-  const sh = SHOTS[bandTier - 1];
   unit();
   // floor shadow
   g.save(); g.translate(BW / 2, BH + WALL + 0.12); g.scale(1, 0.05);
@@ -147,10 +156,6 @@ function buildBottle(bandTier) {
   g.fillStyle = metalStops(g.createLinearGradient(0, 0, BW, 0), [[0, "#D9DADD"], [0.07, "#EAEBED"], [0.3, "#F6F6F7"], [0.55, "#FBFBFB"], [0.86, "#EEEFF1"], [1, "#D6D7DA"]]);
   g.fill(inner);
   g.save(); g.clip(inner);
-  // the shoulder band, printed in the shot colour above the fill line
-  g.fillStyle = metalStops(g.createLinearGradient(0, 0, BW, 0), [[0, sh.dark], [0.1, sh.color], [0.3, sh.light], [0.5, sh.color], [0.84, sh.color], [1, sh.dark]]);
-  g.fillRect(0, -1, BW, FILL + 1);
-  g.fillStyle = "rgba(255,255,255,0.35)"; g.fillRect(0, FILL - 0.05, BW, 0.05);
   gr = g.createLinearGradient(0, BH - 3, 0, BH); gr.addColorStop(0, "rgba(0,0,0,0)"); gr.addColorStop(1, "rgba(0,0,0,0.045)");
   g.fillStyle = gr; g.fillRect(0, BH - 3, BW, 3);
   // ghosted label on the back wall
@@ -160,43 +165,59 @@ function buildBottle(bandTier) {
   const tl = 0.5 * s; if (tl >= 12) { g.font = `700 ${tl}px ${FONT}`; g.fillStyle = "rgba(19,19,19,0.07)"; g.textAlign = "left"; g.fillText("your rhythm", (BW / 2) * s - ww / 2 + wm * 1.02, BH * 0.6 * s + wm * 0.24); }
   unit();
   g.restore();
-  // fill line
-  px(); g.setLineDash([0.3 * s, 0.22 * s]); g.lineWidth = Math.max(1.5, 0.055 * s); g.strokeStyle = "rgba(19,19,19,0.32)";
-  g.beginPath(); g.moveTo(0.14 * s, FILL * s); g.lineTo((BW - 0.14) * s, FILL * s); g.stroke(); g.setLineDash([]);
-  unit();
-  // walls: silver, coloured where the shoulder band runs
+  // walls: brushed silver
   const wp = wallPath(), f = WALL / (BW + 2 * WALL);
   g.fillStyle = metalStops(g.createLinearGradient(-WALL, 0, BW + WALL, 0), [[0, "#7C7E84"], [f * 0.35, "#C8CACE"], [f * 0.62, "#F5F5F6"], [f, "#C9CBCF"], [1 - f, "#BFC1C5"], [1 - f * 0.62, "#E6E7E9"], [1 - f * 0.3, "#A4A6AB"], [1, "#72747A"]]);
   g.fill(wp);
   g.save(); g.clip(wp);
   gr = g.createLinearGradient(0, BH - 0.2, 0, BH + WALL); gr.addColorStop(0, "rgba(0,0,0,0)"); gr.addColorStop(1, "rgba(0,0,0,0.22)");
   g.fillStyle = gr; g.fillRect(-WALL, BH - 0.2, BW + 2 * WALL, WALL + 0.2);
-  g.fillStyle = metalStops(g.createLinearGradient(-WALL, 0, BW + WALL, 0), [[0, sh.dark], [f * 0.35, sh.color], [f * 0.62, sh.light], [f, sh.color], [1 - f, sh.color], [1 - f * 0.62, sh.light], [1 - f * 0.3, sh.color], [1, sh.dark]]);
-  g.fillRect(-WALL - 0.1, -1, BW + 2 * WALL + 0.2, FILL + 1);
-  g.fillStyle = "rgba(0,0,0,0.12)"; g.fillRect(-WALL - 0.1, FILL - 0.02, BW + 2 * WALL + 0.2, 0.04);
-  // specular strips
   g.fillStyle = "rgba(255,255,255,0.65)"; g.fillRect(-WALL * 0.5, 0.15, 0.05, BH - CORNER - 0.2);
   g.fillStyle = "rgba(255,255,255,0.3)"; g.fillRect(BW + WALL * 0.32, 0.15, 0.04, BH - CORNER - 0.2);
   g.restore();
   g.lineWidth = 1 / s; g.strokeStyle = "rgba(0,0,0,0.28)"; g.stroke(wp);
-  return { canvas: c, x0, y0, w: w / dpr, h: h / dpr, band: bandTier };
+  return { canvas: c, x0, y0, w: w / dpr, h: h / dpr };
 }
-// The bottle never changes between band colours, so it lives on its own canvas layer under the game
-// canvas (#scene). Shake / zoom / wobble move that layer with a compositor-only CSS transform, and the
-// per-frame canvas only has to paint what actually moves.
+// The coloured shoulder band (walls + inside, above the fill line) for one shot, as its own small layer.
+function buildBand(tier) {
+  const s = L.s, dpr = L.dpr, x0 = VIEW.l, y0 = -0.4, y1 = FILL + 0.1, sh = SHOTS[tier - 1];
+  const w = Math.ceil((VIEW.r - x0) * s * dpr), h = Math.ceil((y1 - y0) * s * dpr);
+  const c = mkCanvas(w, h), g = c.getContext("2d");
+  g.setTransform(s * dpr, 0, 0, s * dpr, -x0 * s * dpr, -y0 * s * dpr);
+  g.fillStyle = metalStops(g.createLinearGradient(0, 0, BW, 0), [[0, sh.dark], [0.1, sh.color], [0.3, sh.light], [0.5, sh.color], [0.84, sh.color], [1, sh.dark]]);
+  g.fillRect(0, -0.01, BW, FILL + 0.01);
+  g.fillStyle = "rgba(255,255,255,0.35)"; g.fillRect(0, FILL - 0.05, BW, 0.05);
+  const wp = wallPath(), f = WALL / (BW + 2 * WALL);
+  g.save(); g.clip(wp);
+  g.fillStyle = metalStops(g.createLinearGradient(-WALL, 0, BW + WALL, 0), [[0, sh.dark], [f * 0.35, sh.color], [f * 0.62, sh.light], [f, sh.color], [1 - f, sh.color], [1 - f * 0.62, sh.light], [1 - f * 0.3, sh.color], [1, sh.dark]]);
+  g.fillRect(-WALL - 0.1, -1, BW + 2 * WALL + 0.2, FILL + 1);
+  g.fillStyle = "rgba(0,0,0,0.12)"; g.fillRect(-WALL - 0.1, FILL - 0.02, BW + 2 * WALL + 0.2, 0.04);
+  g.fillStyle = "rgba(255,255,255,0.65)"; g.fillRect(-WALL * 0.5, 0.15, 0.05, FILL);
+  g.restore();
+  g.lineWidth = 1 / s; g.strokeStyle = "rgba(0,0,0,0.28)"; g.save(); g.beginPath(); g.rect(-1, -1, BW + 2, FILL + 1); g.clip(); g.stroke(wp); g.restore();
+  // the fill line, on top
+  g.setTransform(dpr, 0, 0, dpr, -x0 * s * dpr, -y0 * s * dpr);
+  g.setLineDash([0.3 * s, 0.22 * s]); g.lineWidth = Math.max(1.5, 0.055 * s); g.strokeStyle = "rgba(19,19,19,0.32)";
+  g.beginPath(); g.moveTo(0.14 * s, FILL * s); g.lineTo((BW - 0.14) * s, FILL * s); g.stroke();
+  return { canvas: c, x0, y0, w: w / dpr, h: h / dpr };
+}
+// The bottle never changes, so it lives on its own canvas layer under the game canvas (#scene), with one
+// small band layer per shot colour crossfaded by CSS opacity. Shake / zoom / wobble move the whole scene
+// with a compositor-only CSS transform; the per-frame canvas only paints what actually moves.
 const scene = $("scene");
-function place(b) { Object.assign(b.canvas.style, { position: "absolute", left: X(b.x0) + "px", top: Y(b.y0) + "px", width: b.w + "px", height: b.h + "px" }); }
-function setBottle(b) { if (bottle.cache && bottle.cache.canvas.parentNode) bottle.cache.canvas.remove(); bottle.cache = b; if (b) { place(b); scene.appendChild(b.canvas); } }
-function dropOld() { if (bottle.old) { bottle.old.canvas.remove(); bottle.old = null; } }
+function place(b, z) { Object.assign(b.canvas.style, { position: "absolute", left: X(b.x0) + "px", top: Y(b.y0) + "px", width: b.w + "px", height: b.h + "px", zIndex: z }); }
+function resetBottle() { scene.replaceChildren(); bottle.cache = null; bottle.bands = {}; bottle.shown = 0; capCache.clear(); shadowCache.clear(); }
 function drawBottle() {
+  if (!bottle.cache) { bottle.cache = buildBottle(); place(bottle.cache, 0); scene.appendChild(bottle.cache.canvas); }
   const band = G ? G.band : 1;
-  if (!bottle.cache || bottle.cache.band !== band) {
-    const prev = bottle.cache;
-    if (prev && G) { dropOld(); bottle.old = prev; bottle.cache = null; bottle.fade = 0; }
-    setBottle(buildBottle(band));
-    if (bottle.old) scene.appendChild(bottle.old.canvas);     // old one on top, fading out
+  if (!bottle.bands[band]) {
+    const b = bottle.bands[band] = buildBand(band); place(b, 1);
+    Object.assign(b.canvas.style, { opacity: "0", transition: "opacity .22s ease" }); scene.appendChild(b.canvas);
   }
-  if (bottle.old) { if (bottle.fade >= 1) dropOld(); else bottle.old.canvas.style.opacity = String(1 - bottle.fade); }
+  if (bottle.shown !== band) {
+    for (const k in bottle.bands) bottle.bands[k].canvas.style.opacity = +k === band ? "1" : "0";
+    bottle.shown = band;
+  }
 }
 let lastTf = "";
 function setSceneTransform(m) {
@@ -204,8 +225,41 @@ function setSceneTransform(m) {
   if (t !== lastTf) { scene.style.transform = t; lastTf = t; }
 }
 
+// Offscreen cache for anything that only changes now and then (HUD, strip, band label): redrawn only when
+// its key changes, otherwise it's one drawImage a frame.
+const caches = {};
+function cached(name, x, y, w, h, key, fn) {
+  const dpr = L.dpr, W = Math.max(1, Math.ceil(w * dpr)), H = Math.max(1, Math.ceil(h * dpr));
+  let c = caches[name];
+  if (!c) c = caches[name] = { cv: mkCanvas(W, H), key: null, x: 0, y: 0 };
+  if (c.cv.width !== W || c.cv.height !== H || c.x !== x || c.y !== y) { c.cv.width = W; c.cv.height = H; c.x = x; c.y = y; c.key = null; }
+  if (c.key !== key) {
+    const g = c.cv.getContext("2d"); g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, W, H); g.setTransform(dpr, 0, 0, dpr, -x * dpr, -y * dpr);
+    const prev = ctx; ctx = g; try { fn(); } finally { ctx = prev; }
+    c.key = key;
+  }
+  ctx.drawImage(c.cv, x, y, w, h);
+}
+
 // the cap (the dropper, and at the end the lid)
-function drawCap(cx, bot, w, h, tier, twist = 0) {
+function capSprite(tier) {
+  let c = capCache.get(tier);
+  if (!c) {
+    const s = L.s, dpr = L.dpr, pad = 0.2, W = (CAP_W + 2 * pad) * s, H = (CAP_H + 2 * pad) * s;
+    const cvs = mkCanvas(Math.ceil(W * dpr), Math.ceil(H * dpr)), g = cvs.getContext("2d");
+    const prev = ctx; ctx = g;
+    // paint with the origin shifted so the cap's top-left (less the padding) lands at 0,0 of the sprite
+    const ox = L.ox, oy = L.oy; L.ox = pad * s; L.oy = (pad + CAP_H - CAP_BOT) * s;
+    try { g.setTransform(dpr, 0, 0, dpr, 0, 0); paintCap(CAP_W / 2, CAP_BOT, CAP_W, CAP_H, tier, 0); } finally { L.ox = ox; L.oy = oy; ctx = prev; }
+    c = { cv: cvs, W, H, pad }; capCache.set(tier, c);
+  }
+  return c;
+}
+function drawCap(cx, bot, w, h, tier, twist = 0, live = false) {
+  if (!live) { const c = capSprite(tier), s = L.s; ctx.drawImage(c.cv, X(cx - CAP_W / 2 - c.pad), Y(bot - CAP_H - c.pad), c.W, c.H); return; }
+  paintCap(cx, bot, w, h, tier, twist);
+}
+function paintCap(cx, bot, w, h, tier, twist = 0) {
   const s = L.s, sh = SHOTS[tier - 1], x = X(cx - w / 2), y = Y(bot - h), W = w * s, H = h * s, r = Math.min(W, H) * 0.14;
   ctx.save();
   // skirt under the cap
@@ -235,11 +289,11 @@ function newGame() {
     discovered: new Set([1]), stripPop: {}, band: 1, bandT: 1, toast: null, hint: 1, codeIdx: -1,
     fx: [], parts: [], pops: [], confetti: [], stamp: null, hitStop: 0, shake: { x: 0, y: 0, vx: 0, vy: 0 }, zoom: 0, capT: -1, endT: 0,
   };
-  G.current = pickTier(); G.next = pickTier();
+  G.current = pickTier(); G.next = pickTier(); G.band = G.current;
 }
 function pickTier() {
   if (!G || G.drops < 3) return rng() < 0.6 ? 1 : 2;
-  const p = clamp(G.score / 2500, 0, 1);
+  const p = clamp(G.score / 2000, 0, 1);              // bigger drops creep in as the run goes on
   const w = [0.4 - 0.08 * p, 0.3 - 0.02 * p, 0.2 + 0.03 * p, 0.1 + 0.07 * p];
   let r = rng() * (w[0] + w[1] + w[2] + w[3]);
   for (let i = 0; i < 4; i++) { r -= w[i]; if (r <= 0) return i + 1; }
@@ -261,6 +315,7 @@ function drop() {
   addPiece(t, G.aim, CAP_BOT + r + 0.05);
   G.capX = G.aim;
   G.drops++; G.current = G.next; G.next = pickTier(); G.cool = COOLDOWN; G.hangT = 0;
+  holding(G.current);
   sound.drop(); buzz(8);
   if (G.drops >= 2) G.hint = Math.min(G.hint, 0.999);
 }
@@ -296,23 +351,22 @@ function merge(a, b) {
   if (nt === 8) { sound.yourDay(); G.stamp = { text: ["Your", "Day."], life: 1.6, max: 1.6 }; }
 }
 function wellbeing(x, y) {
-  const pts = WELLBEING_BONUS * G.combo;
+  const pts = WELLBEING_BONUS;                       // flat: one lucky cascade can't dominate the board
   G.score += pts; G.highest = 9; G.wellbeing = (G.wellbeing || 0) + 1; checkRewards();
-  G.pops.push({ x, y, text: "+" + fmt(pts), combo: G.combo, life: 1.4, tier: 8 });
   for (let i = 0; i < 3; i++) G.fx.push({ kind: "ring", x, y, r: RAD(8) * (0.6 + i * 0.3), tier: 8, life: 1 + i * 0.15 });
   burst(x, y, RAD(8), 8, 60);
   confetti(X(x), Y(y), 160);
-  G.stamp = { text: ["Wellbeing", "In One", "Shot."], life: 2.4, max: 2.4, big: true };
+  G.stamp = { text: ["Wellbeing", "In One", "Shot."], life: 2.4, max: 2.4, big: true, sub: `+${fmt(pts)} bonus` };
   G.hitStop = 0.14; kick(9); G.zoom = 0.03;
   sound.wellbeing(); buzz(40);
   G.world.wakeAll();
 }
+// the bottle's band and cap always show the shot you're holding ("A shot of > ENERGY · & a jetpack")
+function holding(t) { if (t !== G.band) { G.band = t; G.bandT = 0; } }
 function discover(t) {
   if (G.discovered.has(t)) return;
   G.discovered.add(t); G.stripPop[t] = 1;
-  if (t <= 5) { if (t > G.band) { G.band = t; G.bandT = 0; } }
-  else toast("Unlocked >", tierInfo(t).short, tierInfo(t).tag);
-  sound.discover();
+  if (t >= 5) { toast("Unlocked >", tierInfo(t).short, tierInfo(t).tag); sound.discover(); }   // the earned ones get announced
 }
 function toast(line1, name, tag) { G.toast = { line1, name, tag, life: 2.8 }; }
 function checkRewards() {
@@ -375,11 +429,11 @@ function fixedStep() {
 // ---------- per-frame (render-rate) updates ----------
 function update(dt) {
   const g = G;
-  // smooth the dropper toward the aim
-  g.capX += (g.aim - g.capX) * (1 - Math.exp(-dt * 28));
+  // the dropper sits exactly where the finger is: what you see is where it drops
+  g.capX = g.aim;
   g.shown += (g.score - g.shown) * (1 - Math.exp(-dt * 9)); if (Math.abs(g.score - g.shown) < 0.5) g.shown = g.score;
   if (g.chainShow > 0 && g.time - g.lastMerge > CHAIN) g.chainShow = Math.max(0, g.chainShow - dt * 2.5);
-  g.bandT = Math.min(1, g.bandT + dt / 0.6); bottle.fade = Math.min(1, bottle.fade + dt / 0.6);
+  g.bandT = Math.min(1, g.bandT + dt / 0.6);
   if (g.toast && (g.toast.life -= dt) <= 0) g.toast = null;
   for (const k in g.stripPop) g.stripPop[k] = Math.max(0, g.stripPop[k] - dt / 0.6);
   if (g.hint < 1 || g.time > 5) g.hint = Math.max(0, Math.min(g.hint, 1) - dt * 2.5);
@@ -395,6 +449,11 @@ function update(dt) {
   g.zoom *= Math.exp(-dt * 6);
   const near = g.over > 0 ? 1 : clamp(1 - (g.top - FILL) / 2.4, 0, 1);
   g.wobble += (near - g.wobble) * (1 - Math.exp(-dt * 4));
+  // snap the camera back to exactly still: a transform that's merely "nearly" identity still makes the
+  // compositor redo the bottle layer every frame
+  if (g.zoom < 2e-4) g.zoom = 0;
+  if (Math.abs(sk.x) + Math.abs(sk.y) < 0.15 && Math.abs(sk.vx) + Math.abs(sk.vy) < 2) { sk.x = sk.y = sk.vx = sk.vy = 0; }
+  if (g.wobble < 0.12 && near < 0.12) g.wobble = 0;
   // fx
   for (const f of g.fx) f.life -= dt / 0.5;
   g.fx = g.fx.filter((f) => f.life > 0);
@@ -443,8 +502,8 @@ function render(alpha) {
   if (G) {
     const sk = G.shake, piv = [X(BW / 2), Y(BH + WALL)];
     ctx.translate(sk.x, sk.y);
-    const z = 1 + G.zoom; ctx.translate(X(BW / 2), Y(BH / 2)); ctx.scale(z, z); ctx.translate(-X(BW / 2), -Y(BH / 2));
-    const wob = REDUCED ? 0 : Math.sin(G.time * 8.5) * 0.0045 * G.wobble * G.wobble + (G.over > 0 ? Math.sin(G.time * 31) * 0.0025 : 0);
+    if (G.zoom) { const z = 1 + G.zoom; ctx.translate(X(BW / 2), Y(BH / 2)); ctx.scale(z, z); ctx.translate(-X(BW / 2), -Y(BH / 2)); }
+    const wob = REDUCED || !G.wobble ? 0 : Math.sin(G.time * 8.5) * 0.0045 * G.wobble * G.wobble + (G.over > 0 ? Math.sin(G.time * 31) * 0.0025 : 0);
     if (wob) { ctx.translate(piv[0], piv[1]); ctx.rotate(wob); ctx.translate(-piv[0], -piv[1]); }
     if (phase === "capping" && G.capT > 1.12) { const q = Math.exp(-(G.capT - 1.12) * 9) * Math.sin((G.capT - 1.12) * 40) * 0.025; ctx.translate(piv[0], piv[1]); ctx.scale(1 + q, 1 - q); ctx.translate(-piv[0], -piv[1]); }
   }
@@ -457,11 +516,12 @@ function render(alpha) {
     if (phase === "play") drawGuide();
     drawPieces(alpha);
     drawFx();
+    drawBand(true);                                     // the label sits above any piece resting in the band
     drawWarning();
-    if (phase === "capping") { const c = capGeometry(); drawCap(c.cx, c.bot, c.w, c.h, G.band, c.twist); }
+    if (phase === "capping") { const c = capGeometry(); drawCap(c.cx, c.bot, c.w, c.h, G.band, c.twist, true); }
     else drawDropper();
     drawPops();
-  } else drawBand();
+  } else drawBand(true);
   ctx.restore();
 
   if (G) {
@@ -473,23 +533,22 @@ function render(alpha) {
   }
 }
 
-function drawBand() {
+function drawBand(label = false) {
   const s = L.s, x0 = X(0.4), x1 = X(BW - 0.4), top = Y(0), h = FILL * s;
   const small = clamp(0.36 * s, 12, 15);
   let big = clamp(0.64 * s, 14, 28);
   if (small + big * 0.76 + 6 > h - 4) big = Math.max(12, (h - 10 - small) / 0.76);
   const blockH = small + 3 + big * 0.74, by = top + (h - blockH) / 2;
   const y1 = by + small * 0.78, y2 = by + small + 3 + big * 0.72;
-  ctx.save();
-  ctx.beginPath(); ctx.rect(X(0), top, BW * s, h); ctx.clip();
-  ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";
-  const warn = G && G.over > 0;
-  if (warn) {
+  const warn = G && G.over > 0 && phase === "play";
+  if (!label) {
+    if (!warn) return;
     const p = 0.5 + 0.5 * Math.sin(G.time * 14);
     ctx.fillStyle = INK; ctx.fillRect(X(0), top, BW * s, h);
     ctx.fillStyle = `rgba(238,56,49,${0.3 * p})`; ctx.fillRect(X(0), top, BW * s, h);
-    ctx.restore(); return;
+    return;
   }
+  if (warn) return;                                      // the OVER THE LINE overlay replaces the label
   let a = 1, dy = 0, line1 = "A shot of >", name, tag;
   const toast = G && G.toast;
   if (toast) {
@@ -501,17 +560,35 @@ function drawBand() {
     const bt = G ? G.bandT : 1; a = easeOut(bt / 0.6); dy = (1 - easeOut(bt)) * 12;
     name = info.name; tag = info.tag;
   }
-  ctx.globalAlpha = clamp(a, 0, 1);
-  ctx.fillStyle = INK; ctx.font = `700 ${small}px ${FONT}`; ctx.fillText(line1, x0, y1 + dy);
-  ctx.font = `900 ${big}px ${FONT}`; const nw = ctx.measureText(name).width; ctx.fillText(name, x0, y2 + dy);
-  const room = x1 - x0 - nw - small * 1.2;
-  if (room > 40) { const fs = fitFont(ctx, 700, small, tag, room, 12); if (ctx.measureText(tag).width <= room + 0.5 && fs >= 12) { ctx.textAlign = "right"; ctx.fillText(tag, x1, y2 + dy); } }
-  ctx.restore();
+  a = clamp(a, 0, 1);
+  const band = SHOTS[(G ? G.band : 1) - 1].color;
+  const key = `${line1}|${name}|${band}|${Math.round(a * 24)}|${Math.round(dy * 2)}`;
+  const paint = (halo) => {
+    const write = (t, x, y) => { if (halo) ctx.strokeText(t, x, y); ctx.fillText(t, x, y); };
+    ctx.textBaseline = "alphabetic"; ctx.textAlign = "left"; ctx.globalAlpha = a;
+    ctx.lineJoin = "round"; ctx.lineWidth = 6; ctx.strokeStyle = band;
+    ctx.fillStyle = INK; ctx.font = `700 ${small}px ${FONT}`; write(line1, x0, y1 + dy);
+    ctx.font = `900 ${big}px ${FONT}`; const nw = ctx.measureText(name).width; write(name, x0, y2 + dy);
+    const room = x1 - x0 - nw - small * 1.2;
+    if (room > 40) { const fs = fitFont(ctx, 700, small, tag, room, 12); if (ctx.measureText(tag).width <= room + 0.5 && fs >= 12) { ctx.textAlign = "right"; write(tag, x1, y2 + dy); } }
+    ctx.globalAlpha = 1;
+  };
+  // where a piece sits in the band, give the print a band-coloured halo (clipped to those pieces only),
+  // so it reads as printed on the bottle over the top of them
+  if (G && label) {
+    const over = G.world.bodies.filter((b) => b.y - b.r < FILL && b.y + b.r > 0);
+    if (over.length) {
+      ctx.save(); ctx.beginPath(); for (const b of over) { ctx.moveTo(X(b.x) + b.r * s + 4, Y(b.y)); ctx.arc(X(b.x), Y(b.y), b.r * s + 4, 0, Math.PI * 2); }
+      ctx.clip(); paint(true); ctx.restore();
+    }
+  }
+  cached("band", X(0), top - 2, BW * s, h + 4, key, () => paint(false));
 }
 
 function drawGuide() {
   if (G.cool > 0) return;
-  const r = RAD(G.current), x = G.capX, hy = CAP_BOT + r + 0.05;
+  if (G.cancel) return;
+  const r = RAD(G.current), x = G.aim, hy = CAP_BOT + r + 0.05;
   const land = G.world.landingY(x, r, hy);
   if (land <= hy + r * 2) return;
   ctx.save();
@@ -522,16 +599,31 @@ function drawGuide() {
   ctx.restore();
 }
 
+const shadowCache = new Map();
+function shadowSprite(t) {
+  let c = shadowCache.get(t);
+  if (!c) {
+    const R = RAD(t) * 1.06 * L.s * L.dpr, n = Math.max(4, Math.ceil(R * 2));
+    c = mkCanvas(n, n); const g = c.getContext("2d"), gr = g.createRadialGradient(n / 2, n / 2, 0, n / 2, n / 2, n / 2);
+    gr.addColorStop(0, "rgba(40,30,20,0.11)"); gr.addColorStop(0.86, "rgba(40,30,20,0.09)"); gr.addColorStop(1, "rgba(40,30,20,0)");
+    g.fillStyle = gr; g.fillRect(0, 0, n, n); shadowCache.set(t, c);
+  }
+  return c;
+}
 function bodyPos(b, alpha) { return [lerp(b.px, b.x, alpha), lerp(b.py, b.y, alpha), lerp(b.pa, b.a, alpha)]; }
 function drawPieces(alpha) {
   const bodies = G.world.bodies, s = L.s, dpr = L.dpr;
-  // soft contact shadows, one path so overlaps don't stack up darker; clipped to the inside of the bottle
-  ctx.save();
-  const clipP = new Path2D(); clipP.addPath(interiorPath(), new DOMMatrix([s, 0, 0, s, X(0), Y(0)])); ctx.clip(clipP);
-  ctx.beginPath();
-  for (const b of bodies) { const [x, y] = bodyPos(b, alpha); ctx.moveTo(X(x) + b.r * s, Y(y + b.r * 0.13)); ctx.arc(X(x), Y(y + b.r * 0.13), b.r * s * 0.99, 0, Math.PI * 2); }
-  ctx.fillStyle = "rgba(40,30,20,0.09)"; ctx.fill();
-  ctx.restore();
+  // contact shadows: one cached soft disc per tier, cropped at the floor/walls via the source rect
+  // (a clip mask over the whole bottle every frame was the most expensive thing on a software rasteriser)
+  for (const b of bodies) {
+    const [x, y] = bodyPos(b, alpha), sp = shadowSprite(b.tier), R = b.rT * (1.06);
+    const cx = x, cy = y + b.r * 0.13, k = b.r / b.rT;
+    let x0 = cx - R * k, x1 = cx + R * k, y0 = cy - R * k, y1 = cy + R * k;
+    const cl = Math.max(x0, 0), cr = Math.min(x1, BW), cb = Math.min(y1, BH);
+    if (cr <= cl || cb <= y0) continue;
+    const f = sp.width / (x1 - x0);
+    ctx.drawImage(sp, (cl - x0) * f, 0, (cr - cl) * f, (cb - y0) * f, X(cl), Y(y0), (cr - cl) * s, (cb - y0) * s);
+  }
   for (const b of bodies) {
     const d = b.data, [x, y, a] = bodyPos(b, alpha);
     const bounce = d.pop < 1 ? Math.sin(d.pop * Math.PI * 2) * 0.1 * (1 - d.pop) : 0;
@@ -585,7 +677,13 @@ function drawDropper() {
   drawCap(x, CAP_BOT, CAP_W, CAP_H, G.band);
   if (G.cool <= 0 && phase === "play") {
     const r = RAD(G.current), k = easeOutBack(G.hangT), sway = Math.sin(G.time * 2.2) * 0.04;
-    blit(ctx, G.current, X(x), Y(CAP_BOT + r + 0.05), r * s * clamp(k, 0, 1.2), L.dpr, sway, 1, r * s);
+    blit(ctx, G.current, X(x), Y(CAP_BOT + r + 0.05), r * s * clamp(k, 0, 1.2), L.dpr, sway, G.cancel ? 0.35 : 1, r * s);
+    if (G.cancel) {
+      const t = "Release to cancel", fs = 13; ctx.font = `800 ${fs}px ${FONT}`;
+      const w = ctx.measureText(t).width + 24, h = 30, cx = clamp(X(x), X(0) + w / 2, X(BW) - w / 2), cy = Y(CAP_BOT + 2 * r + 0.1) + h / 2 + 6;
+      ctx.fillStyle = INK; roundRect(ctx, cx - w / 2, cy - h / 2, w, h, h / 2); ctx.fill();
+      ctx.fillStyle = PAPER; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(t, cx, cy + 1);
+    }
   }
 }
 
@@ -622,42 +720,54 @@ function chainPill(x, y, fs) {
   ctx.restore();
 }
 function drawHud() {
-  const h = L.hud;
-  ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";
-  ctx.fillStyle = "rgba(19,19,19,0.5)"; ctx.font = `800 12px ${FONT}`; ctx.fillText("SCORE", h.x0, h.y0 + 13);
-  const bt = best > 0 ? `BEST ${fmt(Math.max(best, G.score))}` : ""; if (bt) ctx.fillText(bt, h.x0 + 58, h.y0 + 13);
-  ctx.fillStyle = INK; ctx.font = `900 42px ${FONT}`; const sw = ctx.measureText(fmt(G.shown)).width; ctx.fillText(fmt(G.shown), h.x0 - 2, h.y0 + 52);
-  const pw = 92, ph = 46, px = L.pause.x - 10 - pw;
-  chainPill(h.x0 + sw + 10, h.y0 + 38, 13);
-  nextPill(px, h.y0 + 3, pw, ph, STONE);
+  const h = L.hud, pw = 92, ph = 46, px = L.pause.x - 10 - pw;
+  const chain = G.chainShow > 0 && G.combo >= 2 ? `${G.combo}|${Math.round(G.chainShow * 20)}` : "";
+  cached("hud", L.colX, 0, L.colW, L.hudBottom + 4, `${Math.round(G.shown)}|${best}|${G.next}|${G.band}|${chain}`, () => {
+    ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";
+    ctx.fillStyle = "rgba(19,19,19,0.5)"; ctx.font = `800 12px ${FONT}`; ctx.fillText("SCORE", h.x0, h.y0 + 13);
+    const bt = best > 0 ? `BEST ${fmt(Math.max(best, G.score))}` : ""; if (bt) ctx.fillText(bt, h.x0 + 58, h.y0 + 13);
+    ctx.fillStyle = INK; ctx.font = `900 42px ${FONT}`; const sw = ctx.measureText(fmt(G.shown)).width; ctx.fillText(fmt(G.shown), h.x0 - 2, h.y0 + 52);
+    chainPill(h.x0 + sw + 10, h.y0 + 38, 13);
+    nextPill(px, h.y0 + 3, pw, ph, STONE);
+  });
   drawStrip();
 }
+const STRIP_NAMES = ["Energy", "Focus", "Exercise", "Relax", "Sleep", "Ryde:", "Rhythm", "Your Day"];
+// The day in order, two rows of four, always all eight: ghosted until you've had one in the bottle.
 function drawStrip() {
-  const st = L.strip, n = 8;
-  const sr = clamp(st.w / (n * 2 + (n - 1) * 1.05), 9, 15), gap = sr * 1.05;
-  const total = n * 2 * sr + (n - 1) * gap;
-  let x = st.cx - total / 2 + sr;
-  ctx.fillStyle = "rgba(19,19,19,0.5)"; ctx.font = `800 12px ${FONT}`; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
-  ctx.fillText("YOUR DAY SO FAR >", st.cx - total / 2, st.capY + 4);
-  const last = Math.max(...G.discovered); ctx.textAlign = "right"; ctx.fillStyle = INK; ctx.fillText(tierInfo(last).short, st.cx + total / 2, st.capY + 4);
-  ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  for (let t = 1; t <= n; t++) {
-    const lit = G.discovered.has(t), pop = G.stripPop[t] || 0, k = 1 + Math.sin(pop * Math.PI) * 0.45;
-    if (lit) blit(ctx, t, x, st.cy, sr * k, L.dpr, 0, 1, sr);
-    else { ctx.save(); ctx.setLineDash([3, 3]); ctx.lineWidth = 1.5; ctx.strokeStyle = STONE_DARK; ctx.beginPath(); ctx.arc(x, st.cy, sr - 1, 0, Math.PI * 2); ctx.stroke(); ctx.restore(); }
-    if (t < n) { ctx.fillStyle = "rgba(19,19,19,0.32)"; ctx.font = `800 12px ${FONT}`; ctx.fillText(">", x + sr + gap / 2, st.cy + 1); }
-    x += sr * 2 + gap;
-  }
+  const st = L.strip, pops = Object.values(G.stripPop).some((v) => v > 0);
+  const key = [...G.discovered].join(",") + "|" + (pops ? Object.values(G.stripPop).map((v) => Math.round(v * 30)).join(",") : "");
+  cached("strip", L.colX, st.y0, L.colW, st.h, key, () => {
+    const cw = st.w / 4, dr = 9, row0 = st.y0 + 18 + 14, rowH = 30;
+    ctx.fillStyle = "rgba(19,19,19,0.5)"; ctx.font = `800 12px ${FONT}`; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+    ctx.fillText("YOUR DAY SO FAR >", st.x0, st.y0 + 12);
+    for (let t = 1; t <= 8; t++) {
+      const lit = G.discovered.has(t), pop = G.stripPop[t] || 0, k = 1 + Math.sin(pop * Math.PI) * 0.45;
+      const cx = st.x0 + ((t - 1) % 4) * cw, cy = row0 + (t > 4 ? rowH : 0);
+      blit(ctx, t, cx + dr, cy, dr * k, L.dpr, 0, lit ? 1 : 0.28, dr);
+      ctx.textBaseline = "middle"; ctx.textAlign = "left";
+      ctx.fillStyle = lit ? INK : "rgba(19,19,19,0.38)"; fitFont(ctx, 700, 12, STRIP_NAMES[t - 1], cw - dr * 2 - 14, 12);
+      ctx.fillText(STRIP_NAMES[t - 1], cx + dr * 2 + 5, cy + 1);
+      const end = cx + dr * 2 + 5 + ctx.measureText(STRIP_NAMES[t - 1]).width;
+      if (t % 4) { ctx.fillStyle = "rgba(19,19,19,0.3)"; ctx.font = `800 12px ${FONT}`; ctx.textAlign = "center"; ctx.fillText(">", (end + cx + cw) / 2, cy + 1); }
+    }
+  });
 }
 function drawHudWide() {
-  const { left: lp, right: rp, H, ins, pad } = L;
-  const lw = lp.x1 - lp.x0, rw = rp.x1 - rp.x0;
+  const chain = G.chainShow > 0 && G.combo >= 2 ? `${G.combo}|${Math.round(G.chainShow * 20)}` : "";
+  cached("left", 0, 0, L.colX, L.H, `${Math.round(G.shown)}|${best}|${G.band}|${chain}`, drawLeftPanel);
+  const pops = Object.values(G.stripPop).some((v) => v > 0);
+  cached("right", L.colX + L.colW, 0, L.W - L.colX - L.colW, L.H, `${G.next}|${[...G.discovered].join(",")}|${pops ? Object.values(G.stripPop).map((v) => Math.round(v * 30)).join(",") : ""}`, drawRightPanel);
+}
+function drawLeftPanel() {
+  const { left: lp, H, ins, pad } = L;
+  const lw = lp.x1 - lp.x0;
   ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
   let y = ins.t + pad;
   const wm = clamp(H * 0.045, 18, 34);
   drawWordmark(ctx, lp.x0, y + wm * 0.8, wm, INK); y += wm * 1.2 + 8;
   const eb = clamp(H * 0.022, 12, 16);
-  ctx.fillStyle = INK; ctx.font = `700 ${eb}px ${FONT}`; ctx.fillText("A shot of >", lp.x0, y + eb); y += eb + 4;
+  ctx.fillStyle = INK; ctx.font = `700 ${eb}px ${FONT}`; ctx.fillText("Build your day >", lp.x0, y + eb); y += eb + 4;
   const tsz = fitFont(ctx, 900, clamp(H * 0.065, 20, 54), "DROP SHOT.", lw, 14); ctx.fillText("DROP SHOT.", lp.x0, y + tsz * 0.8); y += tsz * 0.8 + clamp(H * 0.05, 12, 44);
   ctx.fillStyle = "rgba(19,19,19,0.55)"; ctx.font = `800 12px ${FONT}`; ctx.fillText("SCORE", lp.x0, y + 12); y += 14;
   ctx.fillStyle = INK; const ssz = fitFont(ctx, 900, clamp(H * 0.12, 34, 104), fmt(G.shown), lw, 20); ctx.fillText(fmt(G.shown), lp.x0 - 2, y + ssz * 0.78); const sw = ctx.measureText(fmt(G.shown)).width; y += ssz * 0.78;
@@ -678,16 +788,18 @@ function drawHudWide() {
   }
   if (lw - sw > 110) chainPill(lp.x0 + sw + 12, y - ssz * 0.32, clamp(H * 0.02, 12, 16)); else chainPill(lp.x0 + 110, y + 17, 12);
   if (FINE && H > 520) { ctx.fillStyle = "rgba(19,19,19,0.5)"; ctx.font = `700 12px ${FONT}`; ctx.fillText("← → aim · Space drop · P pause", lp.x0, H - ins.b - pad); }
+}
+function drawRightPanel() {
+  const { right: rp, H, ins, pad } = L, rw = rp.x1 - rp.x0;
   // right panel: next + the day so far
   let ry = ins.t + pad;
-  const ph = clamp(H * 0.075, 40, 56), pw = Math.min(rw - 56, ph * 2.1);
-  nextPill(rp.x0, ry, pw, ph, PAPER); ry += ph + clamp(H * 0.04, 10, 28);
+  const nx0 = L.next;
+  nextPill(nx0.x, nx0.y, nx0.w, nx0.h, PAPER); ry += nx0.h + clamp(H * 0.04, 10, 28);
   ctx.textAlign = "left"; ctx.textBaseline = "alphabetic"; ctx.fillStyle = INK; ctx.font = `800 13px ${FONT}`; ctx.fillText("Your day so far >", rp.x0, ry + 12); ry += 22;
   const rowH = clamp((H - ins.b - pad - ry) / 8, 22, 46), dr = clamp(rowH * 0.36, 8, 15);
   for (let t = 1; t <= 8; t++) {
     const info = TIERS[t - 1], lit = G.discovered.has(t), cy = ry + rowH * (t - 0.5), pop = G.stripPop[t] || 0;
-    if (lit) blit(ctx, t, rp.x0 + dr, cy, dr * (1 + Math.sin(pop * Math.PI) * 0.4), L.dpr, 0, 1, dr);
-    else { ctx.save(); ctx.setLineDash([3, 3]); ctx.lineWidth = 1.5; ctx.strokeStyle = STONE_DARK; ctx.beginPath(); ctx.arc(rp.x0 + dr, cy, dr - 1, 0, Math.PI * 2); ctx.stroke(); ctx.restore(); }
+    blit(ctx, t, rp.x0 + dr, cy, dr * (1 + Math.sin(pop * Math.PI) * 0.4), L.dpr, 0, lit ? 1 : 0.28, dr);
     ctx.globalAlpha = lit ? 1 : 0.42; ctx.fillStyle = INK; ctx.textBaseline = "middle";
     const nx = rp.x0 + dr * 2 + 10, nsz = fitFont(ctx, 800, clamp(rowH * 0.38, 12, 16), info.short, rw - dr * 2 - 10, 12);
     ctx.fillText(info.short, nx, cy + 1);
@@ -732,7 +844,7 @@ function drawStamp() {
     ctx.lineWidth = fs * 0.22; ctx.strokeStyle = PAPER; ctx.strokeText(line, 0, y0 + i * lh);
     ctx.fillStyle = st.big ? SHOTS[i % 5 === 0 ? 0 : (i * 2) % 5].color : INK; ctx.fillText(line, 0, y0 + i * lh);
   });
-  if (st.big) { ctx.fillStyle = INK; ctx.font = `900 ${fs * 0.36}px ${FONT}`; ctx.lineWidth = fs * 0.1; ctx.strokeText(`+${fmt(WELLBEING_BONUS)} bonus`, 0, y0 + st.text.length * lh * 0.98); ctx.fillText(`+${fmt(WELLBEING_BONUS)} bonus`, 0, y0 + st.text.length * lh * 0.98); }
+  if (st.sub) { ctx.fillStyle = INK; ctx.font = `900 ${fs * 0.36}px ${FONT}`; ctx.lineWidth = fs * 0.1; ctx.strokeText(st.sub, 0, y0 + st.text.length * lh * 0.98); ctx.fillText(st.sub, 0, y0 + st.text.length * lh * 0.98); }
   ctx.restore();
 }
 function drawConfetti() {
@@ -754,7 +866,7 @@ function frame(ts) {
   if (phase === "play" && dt > 0) {
     perf.ema = perf.ema * 0.92 + dt * 0.08;
     perf.slow = perf.ema > 0.022 ? perf.slow + dt : 0;
-    if (perf.slow > 1.2 && dprCap > 1.25 && L.dpr > 1.25) { dprCap = Math.max(1.25, L.dpr - 0.375); perf.slow = 0; perf.ema = 1 / 60; layout(); }
+    if (perf.slow > 1.2 && L.dpr > 1.5) { dprCap = Math.max(1.5, L.dpr - 0.25); perf.slow = 0; perf.ema = 1 / 60; layout(); }   // never below 1.5: text stays crisp
   }
   let alpha = 1;
   if (G && phase === "play") {
@@ -769,15 +881,30 @@ function frame(ts) {
 // =====================================================================================
 // Input
 // =====================================================================================
-function aimAt(clientX) { if (!G) return; const r = RAD(G.current); G.aim = clamp((clientX - L.ox) / L.s, r, BW - r); }
+// The piece always drops at the finger's final x (no smoothing anywhere on the aim).
+function aimAt(clientX) { if (!G) return; const r = RAD(G.current); G.aim = clamp((clientX - L.ox) / L.s, r, BW - r); G.capX = G.aim; }
+// HUD controls drawn on the canvas (score, Next pill) never start a drop; the pause button is HTML on top.
+function onHud(x, y) {
+  if (y < L.hudBottom) return true;
+  const n = L.next; return !!n && x > n.x - 8 && x < n.x + n.w + 8 && y > n.y - 8 && y < n.y + n.h + 8;
+}
 cv.addEventListener("pointerdown", (e) => {
-  if (phase !== "play" || !G) return;
-  G.dragging = true; G.pointerId = e.pointerId; try { cv.setPointerCapture(e.pointerId); } catch {}
+  if (phase !== "play" || !G || onHud(e.clientX, e.clientY)) return;
+  G.dragging = true; G.cancel = false; G.pointerId = e.pointerId; try { cv.setPointerCapture(e.pointerId); } catch {}
   aimAt(e.clientX);
 });
-cv.addEventListener("pointermove", (e) => { if (phase !== "play" || !G) return; if (e.pointerType === "mouse" || (G.dragging && e.pointerId === G.pointerId)) aimAt(e.clientX); });
-cv.addEventListener("pointerup", (e) => { if (!G || !G.dragging || e.pointerId !== G.pointerId) return; G.dragging = false; if (phase === "play") { aimAt(e.clientX); drop(); } });
-cv.addEventListener("pointercancel", () => { if (G) G.dragging = false; });
+cv.addEventListener("pointermove", (e) => {
+  if (phase !== "play" || !G) return;
+  if (G.dragging && e.pointerId === G.pointerId) { aimAt(e.clientX); G.cancel = e.clientY < L.cancelY; }
+  else if (e.pointerType === "mouse" && !G.dragging) aimAt(e.clientX);
+});
+cv.addEventListener("pointerup", (e) => {
+  if (!G || !G.dragging || e.pointerId !== G.pointerId) return;
+  G.dragging = false;
+  const cancelled = G.cancel || e.clientY < L.cancelY; G.cancel = false;
+  if (phase === "play" && !cancelled) { aimAt(e.clientX); drop(); }
+});
+cv.addEventListener("pointercancel", () => { if (G) { G.dragging = false; G.cancel = false; } });
 lockTouch(cv, () => phase === "play");
 addEventListener("keydown", (e) => {
   if (phase === "play" && G) {
@@ -804,7 +931,6 @@ function hide(id) { const el = $(id); el.classList.add("hidden"); el.classList.a
 function startGame(withSound = true) {
   hide("start"); hide("end"); hide("pausescr");
   newGame(); phase = "play"; acc = 0; lastTs = 0;
-  dropOld(); setBottle(null); bottle.fade = 1;
   $("pause").classList.add("on");
   if (withSound) { sound.init(); sound.resume(); sound.startMusic(); }
 }
@@ -859,7 +985,7 @@ function endGame() {
   $("endeyebrow").textContent = "Capped. That's your day";
   $("endscore").textContent = fmt(score);
   $("endbest").innerHTML = newBest ? `<span class="new">New personal best</span>` : best ? `Your best: ${fmt(best)}` : "";
-  $("endstats").innerHTML = `<div><b>${top.short}</b>Top moment</div><div><b>${g.merges}</b>Merges</div><div><b>×${g.bestChain}</b>Best chain</div>`;
+  $("endstats").innerHTML = `<div><b>${top.short}</b>Top moment</div><div><b>${g.merges}</b>Merges</div>` + (g.merges > 0 ? `<div><b>×${g.bestChain}</b>Best chain</div>` : "");
   // reward
   const got = REWARDS.filter((r) => score >= r.at).pop(), nxt = REWARDS.find((r) => score < r.at), rw = $("reward");
   if (got) {
@@ -872,6 +998,10 @@ function endGame() {
   }
   const btn = $("post"); btn.disabled = false; btn.textContent = "Post score"; btn.classList.remove("held");
   $("postnote").textContent = ""; $("name").value = savedName();
+  // nothing to post below a small minimum (a 0 on the board helps nobody)
+  const canPost = score >= MIN_POST;
+  $("namerow").hidden = !canPost;
+  if (!canPost) $("postnote").textContent = `Score ${MIN_POST} or more to get on the board.`;
   board.load();
   show("end");
   requestAnimationFrame(() => drawChain($("endchain"), g.discovered));
@@ -879,12 +1009,12 @@ function endGame() {
 $("post").addEventListener("click", async () => {
   const name = $("name").value.trim().toUpperCase().slice(0, 12), btn = $("post"), note = $("postnote");
   if (!name) { note.textContent = "Pop a name in first."; $("name").focus(); return; }
-  if (!G) return;
+  if (!G || G.score < MIN_POST) return;
   btn.disabled = true; btn.textContent = "Posting…"; note.textContent = "";
   try {
     const res = await board.post({ name, score: G.score, round: G.highest, detail: G.merges });
     if (res && res.status === "review") { btn.textContent = "Held"; btn.classList.add("held"); note.textContent = HELD_NOTE; }
-    else { btn.textContent = "Posted"; note.textContent = "You're on the board. Good luck in the draw."; }
+    else { btn.textContent = "Posted"; note.textContent = G.score >= REWARDS[2].at ? "You're on the board. Good luck in the draw." : "You're on the board."; }
   } catch { btn.disabled = false; btn.textContent = "Post score"; note.textContent = "Offline — try again"; }
 });
 $("name").addEventListener("input", (e) => { e.target.value = e.target.value.toUpperCase(); });
@@ -900,7 +1030,7 @@ window.__game = {
     for (let i = 0; i < b.length; i++) for (let j = i + 1; j < b.length; j++) { const o = b[i].r + b[j].r - Math.hypot(b[i].x - b[j].x, b[i].y - b[j].y); if (o > maxOverlap) maxOverlap = o; }
     return { phase, score: G ? G.score : 0, pieces: b.length, highestTier: G ? G.highest : 0, overLineTime: G ? +G.over.toFixed(3) : 0, merges: G ? G.merges : 0,
       bestChain: G ? G.bestChain : 0, combo: G ? G.combo : 0, drops: G ? G.drops : 0, current: G ? G.current : 0, next: G ? G.next : 0,
-      discovered: G ? [...G.discovered].sort((a, c) => a - c) : [], dpr: L ? L.dpr : 0, asleep: b.filter((x) => x.asleep).length, maxOverlap: +maxOverlap.toFixed(4), seed, time: G ? +G.time.toFixed(2) : 0, wellbeing: G ? G.wellbeing || 0 : 0 };
+      discovered: G ? [...G.discovered].sort((a, c) => a - c) : [], dpr: L ? L.dpr : 0, counts: G ? { parts: G.parts.length, pops: G.pops.length, fx: G.fx.length, confetti: G.confetti.length, contacts: G.world.warmSize, bodies: b.length } : null, asleep: b.filter((x) => x.asleep).length, maxOverlap: +maxOverlap.toFixed(4), seed, time: G ? +G.time.toFixed(2) : 0, wellbeing: G ? G.wellbeing || 0 : 0 };
   },
   start() { startGame(false); },
   setSeed(n) { setSeed(n); },
@@ -909,6 +1039,7 @@ window.__game = {
   fill(n = 20) { if (G) G.fillQueue += n; },
   advance(sec = 1) { if (!G) return; const n = Math.round(sec / DT); for (let i = 0; i < n && phase === "play"; i++) fixedStep(); },
   bodies() { return G ? G.world.bodies.map((b) => ({ tier: b.tier, x: +b.x.toFixed(3), y: +b.y.toFixed(3), r: +b.r.toFixed(3), vx: +b.vx.toFixed(3), vy: +b.vy.toFixed(3), asleep: b.asleep })) : []; },
+  radius(t) { return RAD(t); },
   forceGameOver() { startCapping(); },
   pause() { pauseGame(); },
   resume() { resumeGame(); },
@@ -917,5 +1048,5 @@ window.__game = {
 // boot
 layout();
 requestAnimationFrame(frame);
-loadFont().then(() => { clearSprites(); setBottle(null); drawHeroChain(); });
+loadFont().then(() => { clearSprites(); resetBottle(); for (const k in caches) caches[k].key = null; drawHeroChain(); });
 drawHeroChain();

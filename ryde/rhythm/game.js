@@ -34,6 +34,7 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const easeOut = (t) => 1 - Math.pow(1 - clamp(t, 0, 1), 3);
 const easeIn = (t) => Math.pow(clamp(t, 0, 1), 2.2);
 const LS = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+const MIN_POST = 100;   // no zero-point entries on the board
 const fmt = (n) => Math.round(n).toLocaleString("en-AU");
 
 const cvs = $("#game"), ctx = cvs.getContext("2d");
@@ -373,6 +374,8 @@ function clockHour(now) {
   const p = clamp((now - G.firstT) / Math.max(0.1, G.lastT - G.firstT), 0, 1);
   return CLOCK_START + p * (CLOCK_END - CLOCK_START);
 }
+/** "MON 6:30 AM": the HUD shows the weekday so the day's moments read right */
+function dayClock(now) { return `${G.chart.weekday} ${clockLabel(now)}`; }
 function clockLabel(now) {
   const p = clamp((now - G.firstT) / Math.max(0.1, G.lastT - G.firstT), 0, 1);
   const mins = Math.round((CLOCK_START * 60 + p * (CLOCK_END - CLOCK_START) * 60) / 5) * 5;
@@ -472,8 +475,13 @@ function drawTrack(now, perf, fg, dark, pulse) {
     ctx.globalAlpha = 0.9 * Math.exp(-wt * 8); ctx.fillStyle = w.lane ? SHOT[w.lane].color : dark ? "#3A3836" : "#8A847D";
     roundRect(ctx, -sw / 2, -sh / 2, sw, sh, 18); ctx.fill(); ctx.globalAlpha = 1;
   }
-  ctx.fillStyle = dark ? `rgba(255,255,255,${0.22 + pulse * 0.2})` : `rgba(19,19,19,${0.16 + pulse * 0.14})`;
-  ctx.font = `900 ${Math.round(L.cardH * 0.36)}px ${FONT}`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("NOW", 0, 1);
+  // the NOW label steps aside whenever a card (arriving, waiting or fading out) is in the slot
+  const ap0 = G.spec.approach, reach = (L.cardH + 8) / L.trackLen;
+  const busy = G.cards.some((c, i) => i >= G.next - 4 && (c.j ? (c.j === "miss" || c.j === "wrong" ? perf - c.jt < 480 : perf - c.jt < 80) : (c.time - now) / (ap0 * (c.slow ? SLOW : 1)) < reach && c.time - now > -1));
+  if (!busy) {
+    ctx.fillStyle = dark ? `rgba(255,255,255,${0.22 + pulse * 0.2})` : `rgba(19,19,19,${0.16 + pulse * 0.14})`;
+    ctx.font = `900 ${Math.round(L.cardH * 0.36)}px ${FONT}`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("NOW", 0, 1);
+  }
   ctx.restore();
 
   // cards
@@ -634,7 +642,7 @@ function drawHud(now, perf, fg, dark) {
   if (!L.compact) {
     ctx.fillStyle = fg; ctx.textAlign = "left"; ctx.font = `900 26px ${FONT}`; ctx.fillText(`DAY ${G.day}`, g, top + 26);
     const dw = ctx.measureText(`DAY ${G.day}`).width;
-    ctx.font = `800 14px ${FONT}`; ctx.fillText(clockLabel(now), g + dw + 12, top + 25);
+    ctx.font = `800 14px ${FONT}`; ctx.fillText(dayClock(now), g + dw + 12, top + 25);
     ctx.font = `700 13px ${FONT}`; ctx.globalAlpha = 0.6; ctx.fillText(sectionLabel(now), g, top + 48); ctx.globalAlpha = 1;
     ctx.textAlign = "right"; ctx.font = `900 28px ${FONT}`; ctx.fillText(fmt(G.score), scoreRight, top + 28);
     let chipW = 0;
@@ -656,8 +664,8 @@ function drawHud(now, perf, fg, dark) {
     drawMeter(g + 74, top + 66, right - g - 74, 12);
   } else {
     ctx.fillStyle = fg; ctx.textAlign = "left"; ctx.font = `900 20px ${FONT}`; ctx.fillText(`DAY ${G.day}`, g, top + 27);
-    const dw = ctx.measureText(`DAY ${G.day}`).width; ctx.font = `800 13px ${FONT}`; ctx.fillText(clockLabel(now), g + dw + 8, top + 26);
-    const cw = ctx.measureText(clockLabel(now)).width;
+    const dw = ctx.measureText(`DAY ${G.day}`).width; ctx.font = `800 13px ${FONT}`; ctx.fillText(dayClock(now), g + dw + 8, top + 26);
+    const cw = ctx.measureText(dayClock(now)).width;
     ctx.textAlign = "right"; ctx.font = `900 22px ${FONT}`; ctx.fillText(fmt(G.score) + (G.mult > 1 ? ` ×${G.mult}` : ""), scoreRight, top + 28);
     const sw = ctx.measureText(fmt(G.score) + (G.mult > 1 ? ` ×${G.mult}` : "")).width;
     const mx = g + dw + 8 + cw + 14, mw = scoreRight - sw - 14 - mx;
@@ -677,7 +685,7 @@ function drawBanner(now, perf, fg, dark) {
 /** the day's one-line tip, as a pill above the cards so a falling card never hides it */
 function drawTip(now, perf, fg, dark) {
   const a = bannerA(now, perf); if (a <= 0) return;
-  const text = `${G.spec.bpm} BPM · ${G.spec.tip}`;
+  const text = `${({ MON: "Monday", TUE: "Tuesday", WED: "Wednesday", THU: "Thursday", FRI: "Friday", SAT: "Saturday", SUN: "Sunday" })[G.chart.weekday]} · ${G.spec.bpm} BPM · ${G.spec.tip}`;
   const size = fitFont(ctx, 800, 14, text, L.colW - 2 * L.g - 32, 12); const tw = ctx.measureText(text).width + 30, ph = size + 16;
   const y = L.trackTop + L.trackLen * 0.4 + Math.min(L.colW * 0.27, L.trackLen * 0.3, 118) * 0.1 + 34;
   ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = fg; roundRect(ctx, L.colW / 2 - tw / 2, y - ph / 2, tw, ph, ph / 2); ctx.fill();
@@ -724,19 +732,20 @@ function drawOverlays(now, perf, fg) {
       ctx.textAlign = "right"; ctx.fillText(r.pct, L.colW - L.g - 22, y + 48); ctx.textAlign = "left";
       y += 64;
     }
-    // hero shot: the Sleep bottle in front of a big moon of a dot, bottom right
-    const bb = top + H - L.ins.b - 30, bh = Math.min(H * 0.42, L.colW * 0.62, bb - (y + 28));
-    if (bh > 120) {
-      const bx = L.colW * 0.72, rise = (1 - easeOut((tin - 0.15) / 0.6)) * 80;
-      ctx.globalAlpha = 1; ctx.fillStyle = SHOT.sleep.light; ctx.beginPath(); ctx.arc(bx + bh * 0.05, bb - bh * 0.55 + rise * 0.5, bh * 0.42, 0, Math.PI * 2); ctx.fill();
+    // what's next sits right under the content, so the colour fade is never a surprise
+    const nx = daySpec(d + 1), nextLine = `Day ${d + 1}: ${nx.tip.charAt(0).toLowerCase()}${nx.tip.slice(1)} >`;
+    ctx.textAlign = "left"; ctx.fillStyle = PAPER; ctx.globalAlpha = a;
+    fitFont(ctx, 800, 17, nextLine, L.colW - L.g * 2 - 12, 13);
+    const ny = y + (L.compact ? 30 : 40); ctx.fillText(nextLine, L.g + 6, ny);
+    // hero shot: the Sleep bottle and its moon, only in the space below that line (never behind text)
+    const bb = top + H - L.ins.b - 24, bh = Math.min(H * 0.42, L.colW * 0.62, (bb - (ny + 22)) / 1.02);
+    if (bh > 110) {
+      const bx = L.colW * 0.68, rise = (1 - easeOut((tin - 0.15) / 0.6)) * 80;
+      ctx.save(); ctx.beginPath(); ctx.rect(-10, ny + 14, L.colW + 20, H); ctx.clip();
+      ctx.globalAlpha = 1; ctx.fillStyle = SHOT.sleep.light; ctx.beginPath(); ctx.arc(bx + bh * 0.05, bb - bh * 0.55 + rise * 0.5, Math.min(bh * 0.42, (bb - ny - 22) * 0.5), 0, Math.PI * 2); ctx.fill();
       drawBottle(ctx, bx, bb - bh / 2 + rise, bh, "sleep", { tilt: 0.1 });
+      ctx.restore();
     }
-    ctx.textAlign = "left"; ctx.fillStyle = PAPER; ctx.font = `700 14px ${FONT}`; ctx.globalAlpha = a * 0.8;
-    // what's next, so the colour fade is never a surprise
-    const nx = daySpec(d + 1), nextLine = `Day ${d + 1}: ${nx.tip.charAt(0).toLowerCase()}${nx.tip.slice(1)}`;
-    ctx.globalAlpha = a; ctx.font = `800 17px ${FONT}`; fitFont(ctx, 800, 17, nextLine + " >", L.colW - L.g * 2 - 12, 13);
-    const ny = top + H - L.ins.b - 26 > y + 40 ? top + H - L.ins.b - 26 : y + 30;
-    ctx.fillText(nextLine + " >", L.g + 6, ny);
     ctx.restore();
   }
   // OUT OF RHYTHM
@@ -746,7 +755,7 @@ function drawOverlays(now, perf, fg) {
     ctx.fillStyle = PAPER; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
     const size = fitFont(ctx, 900, Math.min(L.colW * 0.2, 92), "RHYTHM.", L.colW - L.g * 2 - 8, 36);
     const y = H * 0.42; ctx.fillText("OUT OF", L.g + 4, y); ctx.fillText("RHYTHM.", L.g + 4, y + size * 0.92);
-    ctx.font = `800 16px ${FONT}`; ctx.fillText(`Day ${G.day} · ${clockLabel(G.frozenOver ?? (G.frozenOver = heardAt(perf)))}`, L.g + 6, y + size * 0.92 + 34);
+    ctx.font = `800 16px ${FONT}`; ctx.fillText(`Day ${G.day} · ${dayClock(G.frozenOver ?? (G.frozenOver = heardAt(perf)))}`, L.g + 6, y + size * 0.92 + 34);
     ctx.globalAlpha = 1;
   }
   // 3-2-1
@@ -838,10 +847,11 @@ function showEnd() {
   const judged = Object.values(G.counts).reduce((a, b) => a + b, 0);
   // the end block takes the colour of the moment you reached (stone if you didn't get past the morning)
   const endT = G.frozenOver ?? (G.chart ? heardAt(performance.now()) : 0), hr = G.chart ? clockHour(endT) : 6;
-  const ended = phase === "clear" || G.cleared >= G.day ? "sleep" : hr < 10.1 ? null : hr < 14.25 ? "focus" : hr < 18.4 ? "exercise" : "relax";
+  // morning → Focus yellow, midday → Exercise teal, evening → Relax blue, night / lights out → Sleep purple. Never Energy red.
+  const ended = phase === "clear" || G.cleared >= G.day || hr >= 18.4 ? "sleep" : hr < 10.1 ? "focus" : hr < 14.25 ? "exercise" : "relax";
   const eh = $("#endhero"); eh.style.setProperty("--c", ended ? SHOT[ended].color : STONE); eh.style.setProperty("--t", ended ? inkOn(ended) : INK);
-  const clock = G.chart && G.frozenOver != null ? clockLabel(G.frozenOver) : null;
-  $("#endEyebrow").textContent = G.meter <= 0 ? `Out of rhythm at ${clock || "dawn"}, Day ${G.day}` : `Run ended on Day ${G.day}`;
+  const clock = G.chart && G.frozenOver != null ? dayClock(G.frozenOver) : null;
+  $("#endEyebrow").textContent = G.meter <= 0 ? `Out of rhythm · ${clock || "dawn"}, Day ${G.day}` : `Run ended on Day ${G.day}`;
   $("#endScore").textContent = fmt(G.score);
   $("#stDay").textContent = String(G.day);
   $("#stCombo").textContent = String(G.bestCombo);
@@ -856,11 +866,13 @@ function showEnd() {
   // post form
   const inp = $("#name"); if (!inp.value) inp.value = savedName();
   const btn = $("#post"); btn.disabled = false; btn.textContent = "Post score"; $("#postNote").textContent = "";
+  const canPost = G.score >= MIN_POST; $("#postForm").hidden = !canPost;
+  if (!canPost) $("#postNote").textContent = `Score ${MIN_POST}+ to post to the leaderboard.`;
   showScreen("end"); $("#end").scrollTop = 0;
   board.load();
 }
 $("#postForm").addEventListener("submit", async (e) => {
-  e.preventDefault(); if (!G) return;
+  e.preventDefault(); if (!G || G.score < MIN_POST) return;
   const btn = $("#post"), note = $("#postNote"), name = $("#name").value.trim().toUpperCase().slice(0, 12);
   if (!name) { note.textContent = "Add a name first."; $("#name").focus(); return; }
   if (G.posted) return;
@@ -883,7 +895,7 @@ const CAL = { open: false, ac: null, t0: 0, beat: 0.6, taps: [], off: null, raf:
 const calNote = () => { $("#calNote").textContent = `Current offset: ${jOff >= 0 ? "+" : ""}${Math.round(jOff * 1000)} ms${LS.get("ryde:rhythm:offset") ? "" : " (auto)"}`; };
 function calOpen() { CAL.open = true; showScreen("timing"); $("#calCount").textContent = "Start"; $("#calPad").classList.remove("on"); calNote(); }
 function calClose() { calStop(); CAL.open = false; showScreen("pause"); }
-function calStop() { cancelAnimationFrame(CAL.raf); if (CAL.ac) { CAL.ac.close().catch(() => {}); CAL.ac = null; } $("#calPad").style.transform = ""; }
+function calStop() { cancelAnimationFrame(CAL.raf); if (CAL.ac) { CAL.ac.close().catch(() => {}); CAL.ac = null; } $("#calPad").style.transform = ""; $("#calPad").style.boxShadow = ""; }
 function calStart() {
   calStop(); const AC = window.AudioContext || window.webkitAudioContext; const ac = new AC(); CAL.ac = ac;
   CAL.taps = []; CAL.off = null; CAL.done = false; CAL.t0 = ac.currentTime + 0.5;
@@ -898,7 +910,7 @@ function calStart() {
     const est = ac.currentTime - performance.now() / 1000; CAL.off = CAL.off == null || Math.abs(est - CAL.off) > 0.03 ? est : CAL.off + (est - CAL.off) * 0.08;
     const heard = performance.now() / 1000 + CAL.off - lat(), k = (heard - CAL.t0) / CAL.beat, n = Math.floor(k), f = k - n;
     const pad = $("#calPad");
-    if (k >= 0 && n < 12) { pad.style.transform = `scale(${1 + 0.1 * Math.exp(-f * 6)})`; $("#calCount").textContent = n < 4 ? String(4 - n) : String(n - 3); pad.classList.toggle("on", n >= 4); }
+    if (k >= 0 && n < 12) { const e = Math.exp(-f * 6); pad.style.transform = `scale(${1 + 0.12 * e})`; pad.style.boxShadow = `0 0 0 ${Math.round(14 * e)}px rgba(6,175,154,${0.45 * e})`; $("#calCount").textContent = n < 4 ? String(4 - n) : String(n - 3); pad.classList.toggle("on", n >= 4); }
     if (k > 12.3 && !CAL.done) { CAL.done = true; calFinish(); return; }
     CAL.raf = requestAnimationFrame(loop);
   };
@@ -931,7 +943,7 @@ window.__game = {
     const judged = G.cards ? G.cards.filter((c) => c.j).length : 0;
     return { ...s, day: G.day, bpm: G.spec?.bpm, colour: G.spec?.colour, score: G.score, combo: G.combo, bestCombo: G.bestCombo, mult: G.mult,
       meter: +G.meter.toFixed(3), cleared: G.cleared, counts: { ...G.counts }, cards: G.cards?.length || 0, judged, next: G.next,
-      clock: G.chart ? clockLabel(heardAt(performance.now())) : null, coach: !!G.coach, ctx: audio.ctx?.state };
+      clock: G.chart ? dayClock(heardAt(performance.now())) : null, weekday: G.chart?.weekday, coach: !!G.coach, ctx: audio.ctx?.state };
   },
   skipTo(day = 1) { startRun(Math.max(1, day | 0)); return this.state(); },
   autoplay(on = true) { bot = !!on; return bot; },

@@ -10,11 +10,16 @@
 export const U = 20;
 export const TICK = 1 / 120;
 export const V0 = 210, VMAX = 320;            // units per second (10.5 → 16 m/s)
-/** Jump feel. A tap (released within TAP s) is a small hop; holding keeps lift on until HOLD_MAX; releasing early cuts the rise. */
-export const P = { G: 2700, G_HOLD: 1100, JUMP_V: 740, TAP: 0.09, HOLD_MAX: 0.27, CUT: 0.45, COYOTE: 0.08, BUFFER: 0.1, DJUMP_V: 660, MAXFALL: -1100 };
-/** Hero hitbox: ±HW wide, HH tall from the feet (≈80% of the drawn bottle + legs). FOOT = half-width of the feet for standing. */
-export const HERO = { HW: 11, HH: 84, FOOT: 9 };
-export const speedAt = (m) => V0 + (VMAX - V0) * (1 - Math.exp(-Math.max(0, m) / 700));
+/**
+ * Jump feel. Anything released within TAP s (a natural finger tap is 60–120 ms) is the same safe hop, high enough
+ * for cones, puddles and bins. Holding past TAP keeps lift on until HOLD_MAX: about twice as high, for the tall stuff.
+ * Releasing after TAP cuts the rise, so height follows the hold.
+ */
+export const P = { G: 2400, G_HOLD: 850, JUMP_V: 860, TAP: 0.13, HOLD_MAX: 0.32, CUT: 0.5, COYOTE: 0.08, BUFFER: 0.1, DJUMP_V: 720, MAXFALL: -1100 };
+/** Hero hitbox: ±HW wide (the legs, not the full bottle: forgiving), HH tall from the feet. FOOT = half-width of the feet for standing. */
+export const HERO = { HW: 9, HH: 84, FOOT: 9 };
+/** Speed ramps to VMAX by ~1.3 km, then keeps creeping (+2 m/s per km, up to +3.5 m/s) while the patterns get harder. */
+export const speedAt = (m) => V0 + (VMAX - V0) * (1 - Math.exp(-Math.max(0, m) / 700)) + Math.min(70, Math.max(0, m - 1300) * 0.04);
 
 export function mulberry32(a) {
   return function () { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
@@ -43,12 +48,12 @@ export function dayAt(m) {
 export const OB = {
   cone:    { w: 24, h: 32 },
   bin:     { w: 34, h: 52 },
-  aframe:  { w: 60, h: 64 },
+  aframe:  { w: 88, h: 70 },
   paper:   { w: 42, h: 90 },
   puddle:  { w: 80, h: 6 },
   scooter: { w: 56, h: 54, move: 0.38 },   // rolls toward you at 38% of run speed
   pigeon:  { w: 30, h: 20, fly: 50, move: 0.26 },
-  banner:  { w: 120, h: 40, hang: 112 },   // bottom edge 112 above the street: run under it, don't jump
+  banner:  { w: 120, h: 42, hang: 178 },   // bottom edge 178 up: a tap-hop passes under it, only a full hold hits it
 };
 /** Current x of an item (movers travel at vx from x0 at time t0). */
 export const ix = (it, t) => it.x0 + (it.vx ? it.vx * (t - it.t0) : 0);
@@ -58,8 +63,11 @@ export function obBox(it, t) {
   const x = ix(it, t);
   if (it.type === "banner") return [x + it.w * 0.04, x + it.w * 0.96, it.base + OB.banner.hang + 4, it.base + OB.banner.hang + it.h];
   if (it.type === "pigeon") { const y = pigeonY(it, t); return [x + 5, x + it.w - 5, y + 3, y + it.h - 3]; }
-  return [x + it.w * 0.1, x + it.w * 0.9, it.base, it.base + it.h * 0.85];
+  const f = HB[it.type] || HB.tall;
+  return [x + it.w * f[0], x + it.w * (1 - f[0]), it.base, it.base + it.h * f[1]];
 }
+/** Hitbox forgiveness per hazard: [side inset, height factor]. Low hazards are generous so a tap is a safe move. */
+export const HB = { cone: [0.16, 0.78], bin: [0.14, 0.8], scooter: [0.12, 0.82], tall: [0.1, 0.85], puddle: [0.22] };
 
 /* ── Terrain: sorted list of solid segments {x0, x1, h, kind}. No segment = a gap between rooftops. ── */
 export function surfaceAt(W, a, b) {
@@ -149,7 +157,7 @@ export function collide(W, S) {
   for (const it of W.items) {
     if (it.k !== "ob" || it.gone) continue;
     const x = ix(it, S.t); if (x > x1 + 4 || x + it.w < x0 - 4) continue;
-    if (it.type === "puddle") { if (S.onGround && S.y <= it.base + 1 && x1 > x + it.w * 0.18 && x0 < x + it.w * 0.82) return { kind: "ob", it }; continue; }
+    if (it.type === "puddle") { if (S.onGround && S.y <= it.base + 1 && x1 > x + it.w * HB.puddle[0] && x0 < x + it.w * (1 - HB.puddle[0])) return { kind: "ob", it }; continue; }
     const b = obBox(it, S.t);
     if (x1 > b[0] && x0 < b[1] && y1 > b[2] && y0 < b[3]) return { kind: "ob", it };
   }
@@ -165,43 +173,54 @@ function curve(hold) {
   return { ys, air: k * TICK, apex, top, y: (t) => ys[Math.max(0, Math.min(ys.length - 1, Math.round(t / TICK)))] || 0 };
 }
 export const CURVES = { tap: curve(0), mid: curve(0.16), full: curve(0.4) };
+// banners hang just above the top of a tap-hop (hero head + a little air): tap under it, never hold
+OB.banner.hang = Math.ceil(CURVES.tap.top + HERO.HH + 2);
 
 /* ── Pattern library ("chunks"). Times are seconds of travel from the chunk start; ob() places an obstacle's left edge. ── */
 const C = (id, min, wt, len, build, extra = {}) => ({ id, min, wt, len, build, ...extra });
 export const CHUNKS = [
-  // easy openers
+  // the first ~25 s: tap-only hazards (cones, puddles, bins)
   C("cone", 0, 3, 0.9, (c) => c.arcOver(c.ob("cone", 0.35)), { fade: 700 }),
   C("puddle", 0, 2, 1.0, (c) => c.arcOver(c.ob("puddle", 0.3, { dur: 0.22 })), { fade: 700 }),
-  C("bin", 30, 3, 0.95, (c) => c.arcOver(c.ob("bin", 0.35)), { fade: 900 }),
+  C("bin", 90, 3, 0.95, (c) => c.arcOver(c.ob("bin", 0.35)), { fade: 1100 }),
   C("dots", 0, 1.2, 0.8, (c) => c.line(0.05, 0.7, 46), { fade: 600 }),
-  C("cone-cone", 60, 2, 1.4, (c) => { c.arcOver(c.ob("cone", 0.3)); c.ob("cone", 1.0); }),
-  // the day gets busier
-  C("aframe", 90, 2.5, 1.05, (c) => c.arcOver(c.ob("aframe", 0.35))),
-  C("cones2", 120, 2, 1.05, (c) => { const a = c.ob("cone", 0.35), b = c.ob("cone", 0.35, { dx: 28 }); c.group([a, b]); c.arcOver(a); }),
-  C("paper", 150, 2.5, 1.05, (c) => c.arcOver(c.ob("paper", 0.35))),
-  C("puddle-wide", 180, 1.5, 1.1, (c) => c.arcOver(c.ob("puddle", 0.3, { dur: 0.3 }))),
-  C("banner", 200, 2, 1.0, (c) => { c.ob("banner", 0.2, { dur: 0.6 }); c.line(0.24, 0.52, 40); }),
-  C("bin-cone", 220, 2, 1.5, (c) => { c.arcOver(c.ob("bin", 0.3)); c.arcOver(c.ob("cone", 1.15)); }),
-  C("pigeon", 260, 2, 1.1, (c) => c.arcOver(c.ob("pigeon", 0.55))),
+  C("cone-cone", 60, 2, 1.8, (c) => { c.arcOver(c.ob("cone", 0.3)); c.arcOver(c.ob("cone", 1.45)); }, { fade: 1500 }),
+  C("cones2", 120, 2, 1.05, (c) => { const a = c.ob("cone", 0.35), b = c.ob("cone", 0.35, { dx: 20 }); c.group([a, b]); c.arcOver(a); }, { fade: 1500 }),
+  C("puddle-wide", 180, 1.5, 1.1, (c) => c.arcOver(c.ob("puddle", 0.3, { dur: 0.27 })), { fade: 1500 }),
+  C("bin-cone", 200, 2, 1.85, (c) => { c.arcOver(c.ob("bin", 0.3)); c.arcOver(c.ob("cone", 1.45)); }, { fade: 1700 }),
+  // tall stuff: hold to go higher (the first one comes with a HOLD pill)
+  C("aframe", 280, 2.5, 1.05, (c) => c.arcOver(c.ob("aframe", 0.35)), { fade: 1700 }),
+  C("paper", 300, 2.5, 1.05, (c) => c.arcOver(c.ob("paper", 0.35)), { fade: 1700 }),
+  C("banner", 330, 2, 1.0, (c) => { c.ob("banner", 0.2, { dur: 0.6 }); c.line(0.24, 0.52, 40); }, { fade: 1700 }),
+  C("pigeon", 360, 2, 1.1, (c) => c.arcOver(c.ob("pigeon", 0.55)), { fade: 1700 }),
   // rush hour
-  C("scooter", 360, 2.5, 1.25, (c) => c.ob("scooter", 0.65)),
-  C("gap", 420, 2.5, 1.2, (c) => { c.gap(0.3, 0.5); c.arcOver(c.hintGap(0.3, 0.5)); }, { roof: true }),
+  C("scooter", 400, 2.5, 1.25, (c) => c.ob("scooter", 0.65)),
+  C("gap", 430, 2.5, 1.25, (c) => { c.gap(0.3, 0.58); c.arcOver(c.hintGap(0.3, 0.58)); }, { roof: true }),
   C("plat", 480, 2, 2.0, (c) => { c.plat(0.35, 1.4, 56); c.hintWall(0.35); c.arcOver(c.ob("cone", 1.05)); }, { roof: true }),
   C("banner-bin", 520, 2, 1.45, (c) => { c.ob("banner", 0.15, { dur: 0.5 }); c.line(0.2, 0.4, 40); c.arcOver(c.ob("bin", 1.05)); }),
-  C("aframe2", 560, 1.6, 1.75, (c) => { c.arcOver(c.ob("aframe", 0.3)); c.arcOver(c.ob("aframe", 1.3)); }),
-  C("puddle-cone", 600, 1.6, 1.45, (c) => { c.arcOver(c.ob("puddle", 0.3, { dur: 0.22 })); c.arcOver(c.ob("cone", 1.05)); }),
+  C("aframe2", 560, 1.6, 1.85, (c) => { c.arcOver(c.ob("aframe", 0.3)); c.arcOver(c.ob("aframe", 1.4)); }),
+  C("puddle-cone", 600, 1.6, 1.8, (c) => { c.arcOver(c.ob("puddle", 0.3, { dur: 0.22 })); c.arcOver(c.ob("cone", 1.4)); }),
   // night shift
-  C("roofs", 750, 2, 2.45, (c) => { c.gap(0.3, 0.5); c.arcOver(c.hintGap(0.3, 0.5)); c.plat(1.3, 0.95, 56); c.hintWall(1.3); }, { roof: true }),
+  C("roofs", 750, 2, 2.5, (c) => { c.gap(0.3, 0.55); c.arcOver(c.hintGap(0.3, 0.55)); c.plat(1.35, 0.95, 56); c.hintWall(1.35); }, { roof: true }),
   C("cone-scooter", 800, 1.8, 1.8, (c) => { c.arcOver(c.ob("cone", 0.3)); c.ob("scooter", 1.4); }),
-  C("bin-pigeon", 850, 1.8, 1.85, (c) => { c.arcOver(c.ob("bin", 0.3)); c.ob("pigeon", 1.35); }),
-  C("paper-banner", 900, 1.6, 1.95, (c) => { c.arcOver(c.ob("paper", 0.3)); c.ob("banner", 1.15, { dur: 0.5 }); c.line(1.2, 0.4, 40); }),
+  C("bin-pigeon", 850, 1.8, 1.9, (c) => { c.arcOver(c.ob("bin", 0.3)); c.ob("pigeon", 1.4); }),
+  C("paper-banner", 900, 1.6, 2.0, (c) => { c.arcOver(c.ob("paper", 0.3)); c.ob("banner", 1.2, { dur: 0.5 }); c.line(1.25, 0.4, 40); }),
   C("triple", 950, 1.6, 2.15, (c) => { c.ob("cone", 0.3); c.ob("bin", 1.0); c.ob("cone", 1.7); }),
-  C("gap2", 1000, 1.6, 2.05, (c) => { c.gap(0.3, 0.5); c.hintGap(0.3, 0.5); c.gap(1.35, 0.5); c.arcOver(c.hintGap(1.35, 0.5)); }, { roof: true }),
-  C("paper-gap", 1100, 1.4, 2.0, (c) => { c.arcOver(c.ob("paper", 0.3)); c.gap(1.25, 0.5); c.hintGap(1.25, 0.5); }, { roof: true }),
+  C("gap2", 1000, 1.6, 2.15, (c) => { c.gap(0.3, 0.55); c.hintGap(0.3, 0.55); c.gap(1.4, 0.55); c.arcOver(c.hintGap(1.4, 0.55)); }, { roof: true }),
+  C("paper-gap", 1100, 1.4, 2.1, (c) => { c.arcOver(c.ob("paper", 0.3)); c.gap(1.3, 0.55); c.hintGap(1.3, 0.55); }, { roof: true }),
   C("scooter2", 1150, 1.4, 2.2, (c) => { c.ob("scooter", 0.65); c.ob("scooter", 1.65); }),
+  // past 1.3 km: speed has capped, so the challenge comes from combinations
+  C("gap-bin", 1300, 2, 2.0, (c) => { c.gap(0.3, 0.55); c.hintGap(0.3, 0.55); c.arcOver(c.ob("bin", 1.45)); }, { roof: true }),
+  C("banner-scooter", 1350, 2, 1.9, (c) => { c.ob("banner", 0.15, { dur: 0.5 }); c.ob("scooter", 1.35); }),
+  C("cone-pigeon", 1400, 2, 1.85, (c) => { c.arcOver(c.ob("cone", 0.3)); c.ob("pigeon", 1.25); }),
+  C("banner-gap", 1500, 2, 1.9, (c) => { c.ob("banner", 0.15, { dur: 0.45 }); c.gap(1.0, 0.55); c.hintGap(1.0, 0.55); }, { roof: true }),
+  C("quad", 1600, 2, 2.9, (c) => { c.ob("cone", 0.3); c.ob("bin", 0.95); c.ob("aframe", 1.7); c.ob("cone", 2.55); }),
+  C("gap-paper-gap", 1800, 2, 3.0, (c) => { c.gap(0.3, 0.55); c.hintGap(0.3, 0.55); c.ob("paper", 1.45); c.gap(2.35, 0.55); c.hintGap(2.35, 0.55); }, { roof: true }),
+  C("scooter3", 2000, 2, 2.9, (c) => { c.ob("scooter", 0.65); c.ob("scooter", 1.5); c.ob("scooter", 2.35); }),
+  C("pigeon-paper", 2200, 2, 2.05, (c) => { c.ob("pigeon", 0.5); c.ob("paper", 1.45); }),
 ];
 /** Breather between patterns; tightens with distance. */
-export const breather = (m) => Math.max(0.36, 0.85 - m / 2600);
+export const breather = (m) => Math.max(0.18, 0.85 - m / 2600);
 
 const FLIGHT = C("flight", 0, 0, 1.0, (c, R) => {
   const t = ["cone", "bin", "paper", "aframe"][Math.floor(R() * 4)]; c.ob(t, 0.45);
@@ -224,7 +243,8 @@ export function createWorld(seed, startM = 0, opts = {}) {
 
 function pickChunk(W, m) {
   const pool = CHUNKS.filter((c) => m >= c.min && c.id !== W.last);
-  const wts = pool.map((c) => c.wt * Math.min(1, 0.5 + (m - c.min) / 300) * (c.fade && m > c.fade ? 0.35 : 1));
+  // new patterns fade in over 300 m; the easy ones fade out; past 1.3 km the newest patterns are favoured
+  const wts = pool.map((c) => c.wt * Math.min(1, 0.5 + (m - c.min) / 300) * (c.fade && m > c.fade ? 0.35 : 1) * (m > 1300 && c.min >= 1000 ? 2.2 : 1));
   let r = W.rand() * wts.reduce((a, b) => a + b, 0);
   for (let i = 0; i < pool.length; i++) { r -= wts[i]; if (r <= 0) return pool[i]; }
   return pool[pool.length - 1];
@@ -232,9 +252,10 @@ function pickChunk(W, m) {
 
 function pickPower(W, m) {
   const night = dayAt(m).id === "night" && dayAt(m).mm < 1040;
-  if (night && !W.sleepSpawned) return "sleep";
+  if (night && !W.sleepSpawned && W.lastPow !== "sleep") return "sleep";
   // a shuffled bag: you meet all four daytime moments before any repeats
-  if (!W.bag || !W.bag.length) { W.bag = ["energy", "focus", "exercise", "relax"]; for (let i = 3; i > 0; i--) { const j = Math.floor(W.rand() * (i + 1)); [W.bag[i], W.bag[j]] = [W.bag[j], W.bag[i]]; } if (W.bag[0] === W.lastPow) W.bag.push(W.bag.shift()); }
+  if (!W.bag || !W.bag.length) { W.bag = ["energy", "focus", "exercise", "relax"]; for (let i = 3; i > 0; i--) { const j = Math.floor(W.rand() * (i + 1)); [W.bag[i], W.bag[j]] = [W.bag[j], W.bag[i]]; } }
+  if (W.bag[0] === W.lastPow) W.bag.push(W.bag.shift());   // never the same one twice in a row
   return W.bag.shift();
 }
 
@@ -272,19 +293,21 @@ function chunkCtx(W, S, x0, v) {
     line(t, dur, y) { const n = Math.max(2, Math.round((dur * v) / 26) + 1); for (let i = 0; i < n; i++) c.dot(at(t) + (i * dur * v) / (n - 1), y); },
     ob(type, t, o = {}) {
       const d = OB[type];
-      const w = o.dur ? Math.round(o.dur * v) : d.w;
+      const w = o.dur ? Math.max(type === "banner" ? 160 : 0, Math.round(o.dur * v)) : d.w;   // banners wide enough for big lettering
       const x = at(t) + (o.dx || 0);
       const it = { k: "ob", type, x0: x, vx: 0, t0: 0, w, h: d.h, base: surfaceAt(W, x, x + w) ?? 0, var: W.rand(), id: ++W.uid };
       if (d.move) {   // movers: arrive at x when the hero does (approximately), so the pattern reads the same at any speed
         const tm = S.t + (x - S.x) / v; it.t0 = tm; it.vx = -d.move * v;
       }
       it.hint = hintFor(it, v);
+      if (!W.taughtHold && (type === "aframe" || type === "paper" || type === "pigeon")) { W.taughtHold = true; it.teach = "HOLD ↑"; }
+      if (!W.taughtLow && type === "banner") { W.taughtLow = true; it.teach = "STAY LOW"; }
       W.items.push(it); return it;
     },
     /** Several obstacles cleared with one jump: one HOLD hint for the lot. */
-    group(list) { const a = list[0], b = list[list.length - 1]; const cx = (a.x0 + b.x0 + b.w) / 2; a.hint = { x: cx - 0.41 * v, kind: "HOLD" }; for (const o of list.slice(1)) o.hint = null; },
-    hintGap(t, dur) { const cx = at(t + dur / 2); const h = { x: cx - (CURVES.full.air / 2 - 0.01) * v, kind: "HOLD", base: 0 }; W.items.push({ k: "hint", x0: h.x, hint: h, id: ++W.uid }); return { hint: h, base: 0 }; },
-    hintWall(t) { const h = { x: at(t) - 0.3 * v, kind: "HOLD", base: 0 }; W.items.push({ k: "hint", x0: h.x, hint: h, id: ++W.uid }); },
+    group(list) { const a = list[0], b = list[list.length - 1]; const cx = (a.x0 + b.x0 + b.w) / 2; a.hint = { x: cx - 0.26 * v, kind: "TAP" }; for (const o of list.slice(1)) o.hint = null; },
+    hintGap(t, dur) { const cx = at(t + dur / 2); const h = { x: cx - (CURVES.full.air / 2 - 0.07) * v, kind: "HOLD", base: 0 }; W.items.push({ k: "hint", x0: h.x, hint: h, id: ++W.uid }); return { hint: h, base: 0 }; },
+    hintWall(t) { const h = { x: at(t) - 0.45 * v, kind: "HOLD", base: 0 }; W.items.push({ k: "hint", x0: h.x, hint: h, id: ++W.uid }); },
     /** A dot arc along the hinted jump: collect them by jumping the way the hint suggests. */
     arcOver(it) {
       const h = it && it.hint; if (!h || h.x == null) return it;
@@ -296,8 +319,8 @@ function chunkCtx(W, S, x0, v) {
     power(t) {
       const m = at(t) / U, id = pickPower(W, m);
       W.items.push({ k: "pow", id, x0: at(t), base: surfaceAt(W, at(t), at(t) + 1) ?? 0, y: 30, w: 26, h: 46, uid: ++W.uid });
-      W.lastPow = id; if (id === "sleep") W.sleepSpawned = true;
-      W.nextPowM = m + 240 + W.rand() * 100;
+      W.lastPow = id; if (id === "sleep") W.sleepSpawned = true; (W.powLog || (W.powLog = [])).push({ id, m: Math.round(m) });
+      W.nextPowM = m + 450 + W.rand() * 120;   // moments, not candy
     },
   };
   return c;
@@ -305,15 +328,15 @@ function chunkCtx(W, S, x0, v) {
 
 /** The FOCUS power-up's "ideal jump point": where to take off, and whether to tap or hold. */
 function hintFor(it, v) {
-  // Offsets measured with the planner (see the fairness test): each sits in the middle of the takeoff window.
+  // Offsets measured with the planner (win2.mjs): each hint sits in the middle of its take-off window.
   const cx = it.x0 + it.w / 2;
   switch (it.type) {
-    case "cone": case "puddle": return { x: cx - 0.18 * v, kind: "TAP" };
-    case "bin": case "aframe": case "paper": return { x: cx - 0.41 * v, kind: "HOLD" };
+    case "cone": case "bin": return { x: cx - 0.26 * v, kind: "TAP" };
+    case "puddle": return { x: cx - 0.237 * v, kind: "TAP" };
+    case "aframe": case "paper": return { x: cx - 0.457 * v, kind: "HOLD" };
     // movers: the hero's centre meets theirs w/2 ÷ (relative speed) after reaching the left edge
-    case "pigeon": return { x: it.x0 + it.w / (2 * (1 + OB.pigeon.move)) - 0.49 * v, kind: "HOLD" };
-    case "scooter": return { x: it.x0 + it.w / (2 * (1 + OB.scooter.move)) - 0.48 * v, kind: "HOLD" };
-    case "banner": return { kind: "LOW" };
+    case "pigeon": case "scooter": return { x: it.x0 + it.w / (2 * (1 + OB[it.type].move)) - 0.456 * v, kind: "HOLD" };
+    case "banner": return { x: it.x0 - 0.12 * v, kind: "LOW" };   // marks where to stay low (no jump needed)
   }
   return null;
 }
@@ -393,6 +416,6 @@ export function forceChunk(W, S, id) {
   const ch = CHUNKS.find((c) => c.id === id); const x0 = W.genX, v = speedAt(x0 / U);
   W.chunkStarts.push(x0); addGround(W, x0, x0 + ch.len * v, ch.roof ? "roof" : "street");
   ch.build(chunkCtx(W, S, x0, v), W.rand, x0 / U);
-  addGround(W, x0 + ch.len * v, x0 + ch.len * v + 2 * v, "street"); W.genX = x0 + (ch.len + 2) * v;
+  addGround(W, x0 + ch.len * v, x0 + ch.len * v + 6 * v, "street"); W.genX = x0 + (ch.len + 6) * v;
   return x0;
 }

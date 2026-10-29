@@ -51,12 +51,23 @@ function layout() {
   const w = innerWidth, h = innerHeight; dpr = Math.min(2, devicePixelRatio || 1);
   cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); cv.style.width = w + "px"; cv.style.height = h + "px";
   ins = safeInsets();
-  // a portrait column (max 480px); short landscape screens get a narrower column so everyone sees the same world
-  L.W = w; L.H = h; L.colW = Math.round(Math.min(w, 480, h * 0.9)); L.colX = Math.round((w - L.colW) / 2);
-  L.band = Math.round(h < 520 ? h * 0.2 : clamp(h * 0.27, 72, 250)); L.groundPx = h - L.band;
+  L.W = w; L.H = h; L.land = w > h && h < 560;
+  if (L.land) {   // landscape phones: a full-width side-scroller, world scaled to the height
+    L.colX = 0; L.colW = w; L.band = Math.round(h * 0.18); L.groundPx = h - L.band;
+    L.landScale = clamp((L.groundPx - ins.t - 40) / 300, 0.6, 1.2);
+  } else {        // portrait phones + desktop: a portrait column (max 480px), stone either side
+    L.colW = Math.round(Math.min(w, 480, h * 0.9)); L.colX = Math.round((w - L.colW) / 2);
+    L.band = Math.round(clamp(h * 0.22, 72, 200)); L.groundPx = h - L.band;
+  }
   sizePreview();
 }
 const viewWFor = (z) => 400 + 90 * z;   // world units across the column; widens with speed so you always see ~1.2 s ahead
+/** Camera: world units across the screen and the px-per-unit scale. Landscape keeps the hero's size and shows more road. */
+function cam() {
+  const z = R ? R.zoom : 0;
+  if (L.land) { const scale = L.landScale * (1 - 0.1 * z); return { scale, viewW: L.colW / scale }; }
+  const viewW = viewWFor(z); return { viewW, scale: L.colW / viewW };
+}
 
 /* ── audio ──────────────────────────────────────────────────────────────── */
 const audio = createAudio(); let lp = null, seq = null;
@@ -113,7 +124,7 @@ function newRun(startM = 0) {
   const S = newHero(startM * U);
   R = { seed, W: createWorld(seed, startM), S, prev: { x: S.x, y: S.y, t: 0 }, acc: 0, dots: 0, combo: 0, comboT: 0, power: null, nap: false, napT: 0,
     invT: 0, ts: 1, tsTarget: 1, stop: 0, cyc: 0, stepPh: 0, sq: 0, sqv: 0, shake: 0, nudge: 0, nudgeV: 0, parts: [], knocked: [], toasts: [], banner: null, flash: null,
-    hintT: 0, rw: REWARDS.filter((r) => startM >= r.m).length, dayI: dayAt(startM).i, zoom: 0, intensity: 0.15, cmds: [], cur: null, lastPlan: -9,
+    hintT: 0, rw: REWARDS.filter((r) => startM >= r.m).length, dayI: dayAt(startM).i, dayId: dayAt(startM).id, zoom: 0, intensity: 0.15, cmds: [], cur: null, lastPlan: -9,
     bulb: 0, tumble: null, dieT: 0, cause: "", pressQ: false, paused: false, camX: S.x - 100, signPulse: 0, jetOn: false, startM, maxCombo: 0, powersUsed: 0, log: [] };
   city.reset();
 }
@@ -121,7 +132,7 @@ function newRun(startM = 0) {
 /* ── input ──────────────────────────────────────────────────────────────── */
 const ptrs = new Set(); let keyDown = false;
 const isDown = () => ptrs.size > 0 || keyDown;
-function pauseRect() { const r = 20, x = L.colX + L.colW - 16 - r, y = ins.t + 14 + r; return { x, y, r }; }
+function pauseRect() { const r = 20, x = L.colX + L.colW - 16 - r - (L.land ? ins.r : 0), y = ins.t + 14 + r; return { x, y, r }; }
 cv.addEventListener("pointerdown", (e) => {
   if (phase !== "play" || !R) return;
   e.preventDefault();
@@ -154,7 +165,7 @@ $("resume").addEventListener("click", resumeGame);
 $("quit").addEventListener("click", () => { if (!R) return; resumeGame(); crash({ kind: "quit" }); });
 
 /* ── simulation tick (fixed 120 Hz) ─────────────────────────────────────── */
-const jetCeil = () => Math.max(110, Math.min(230, (L.groundPx - ins.t - 122) / (L.colW / viewWFor(R ? R.zoom : 0)) - 102));   // keep the hero clear of the HUD
+const jetCeil = () => Math.max(110, Math.min(230, (L.groundPx - ins.t - 122) / cam().scale - 102));   // keep the hero clear of the HUD
 function tick() {
   if (R.napT > 0) return;
   const W = R.W, S = R.S;
@@ -177,7 +188,8 @@ function tick() {
     // the sneakers' speed boost only runs out on the ground, so a jump is never cut short mid-air
     if (R.power.id === "exercise" ? S.boostOff : R.power.t <= 0) endPower();
   }
-  generate(W, S, S.x + 1500, { powerActive: !!R.power });
+  R.camX = S.x - 0.22 * cam().viewW;
+  generate(W, S, S.x + 1800, { powerActive: !!R.power });
   prune(W, R.camX - 40, S.t);
   progress();
 }
@@ -237,8 +249,8 @@ function collect() {
       const by = it.base + it.y;
       if (Math.abs(it.x0 - S.x) < 24 && S.y < by + it.h + 8 && S.y + HERO.HH > by - 8) { it.got = true; givePower(it.id); }
     } else if (it.k === "sign" && !it.passed && S.x >= it.x0) { it.passed = true; R.signPulse = 1; sfx.chime(); }
-    else if (it.k === "ob" && it.type === "scooter" && !it.dinged && ix(it, S.t) < R.camX + viewWFor(R.zoom) + 20) { it.dinged = true; sfx.ding(); }
-    else if (it.k === "ob" && it.type === "pigeon" && !it.dinged && ix(it, S.t) < R.camX + viewWFor(R.zoom) + 20) { it.dinged = true; sfx.coo(); }
+    else if (it.k === "ob" && it.type === "scooter" && !it.dinged && ix(it, S.t) < R.camX + cam().viewW + 20) { it.dinged = true; sfx.ding(); }
+    else if (it.k === "ob" && it.type === "pigeon" && !it.dinged && ix(it, S.t) < R.camX + cam().viewW + 20) { it.dinged = true; sfx.coo(); }
   }
 }
 function givePower(id) {
@@ -248,7 +260,7 @@ function givePower(id) {
     if (R.power) endPower(true);
     R.power = { id, t: DUR[id], dur: DUR[id], until: S.t + DUR[id] }; S.boostOff = false;
     if (id === "energy") {   // regenerate the unseen road as open sky, with a clean runway where the jetpack runs out
-      reflow(W, R.camX + viewWFor(R.zoom) + 30); W.flightTo = S.x + DUR.energy * S.v; W.landPending = true;
+      reflow(W, R.camX + cam().viewW + 30); W.flightTo = S.x + DUR.energy * S.v; W.landPending = true;
       S.vy = Math.max(S.vy, 300); S.onGround = false;
     }
     if (id === "focus") { R.tsTarget = 0.55; R.bulb = 1; }
@@ -291,7 +303,7 @@ function progress() {
   const m = R.S.x / U;
   R.intensity = clamp(0.15 + m / 900, 0.15, 1);
   if (R.rw < REWARDS.length && m >= REWARDS[R.rw].m) { const r = REWARDS[R.rw]; R.rw++; sfx.reward(); toast(`${r.code} unlocked`, INK, true); for (let i = 0; i < 20; i++) part({ x: R.S.x, y: R.S.y + 60, vx: rnd(-220, 220), vy: rnd(100, 420), r: rnd(3, 5), c: SHOTS[i % 5].color, life: 1, g: 700 }); }
-  const d = dayAt(m); if (d.i !== R.dayI) { R.dayI = d.i; toast(d.name, null); }
+  const d = dayAt(m); if (d.i !== R.dayI) { R.dayI = d.i; if (d.id !== R.dayId) toast(d.name, null); R.dayId = d.id; }
 }
 function toast(text, color, big) { R.toasts.push({ text, color, big, t: 0 }); if (R.toasts.length > 3) R.toasts.shift(); }
 
@@ -362,7 +374,7 @@ function stepTumble(dt) {
 function render(alpha, now) {
   const S = R.S;
   const hx = lerp(R.prev.x, S.x, alpha), hy = lerp(R.prev.y, S.y, alpha), tr = lerp(R.prev.t, S.t, alpha);
-  const viewW = viewWFor(R.zoom), scale = L.colW / viewW;
+  const { viewW, scale } = cam();
   const camX = hx - 0.22 * viewW; R.camX = camX;
   const m = hx / U, P = paletteAt(m);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -403,6 +415,8 @@ function render(alpha, now) {
   drawParticles(ctx, true);
   drawHeroNow(hx, hy, now);
   drawParticles(ctx, false);
+  // one-time teaching pills: the first tall hazard ("HOLD") and the first banner ("STAY LOW")
+  for (const it of R.W.items) if (it.teach && !it.gone && it.k === "ob") { const x = ix(it, tr); if (x > x0 && x < x1 && x + it.w > hx - 30) drawTeach(ctx, it, x, now, fs); }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   if (R.flash) { ctx.fillStyle = rgba(R.flash.c, 0.28 * (R.flash.t / 0.35)); ctx.fillRect(L.colX, 0, L.colW, L.H); }
   if (R.napT > 0) drawNap(now);
@@ -471,7 +485,7 @@ function drawSides(P) {
   const sw = L.colX; if (sw < 180 || L.H < 420) return;
   ctx.fillStyle = INK; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
   const x = Math.max(24, sw - 300);
-  drawWordmark(ctx, x, 86, 46, INK, true);
+  const wmW = drawWordmark(ctx, x, 86, 46, INK, false); ctx.font = `700 13px ${FONT}`; ctx.fillText("your rhythm", x + wmW * 0.42, 106);
   ctx.font = `900 ${Math.min(64, sw * 0.18)}px ${FONT}`; ctx.fillText("Run", x, 190); ctx.fillText("Club.", x, 190 + Math.min(64, sw * 0.18) * 0.92);
   ctx.font = `700 15px ${FONT}`; ctx.fillStyle = "rgba(19,19,19,0.7)";
   ctx.fillText("Space, ↑ or click to jump.", x, 300); ctx.fillText("Hold to go higher.  P to pause.", x, 322);
@@ -485,49 +499,40 @@ const POWER_COPY = { energy: "Fly for 4 s. Hold to rise.", focus: "Slow-mo, and 
 function drawHUD(P, now) {
   // HUD flips between ink and white by sky brightness (never a muddy mid-grey during a blend)
   const sk = rgbOf(P.sky), lum = (0.2126 * sk[0] + 0.7152 * sk[1] + 0.0722 * sk[2]) / 255;
-  const S = R.S, ink = lum < 0.45 ? "#FFFFFF" : INK, x = L.colX + 16, top = ins.t + 14;
+  const S = R.S, ink = lum < 0.45 ? "#FFFFFF" : INK, x = L.colX + 16 + (L.land ? ins.l : 0), top = ins.t + 14;
+  const dash = L.band >= 140;   // tall screens: code progress + power meter live in the band below the street
   const m = Math.floor(S.x / U);
   ctx.textAlign = "left"; ctx.textBaseline = "alphabetic"; ctx.fillStyle = ink;
-  const pulse = R.signPulse;
-  ctx.font = `900 ${34 + pulse * 6}px ${FONT}`; const mt = `${m.toLocaleString()}`; ctx.fillText(mt, x, top + 30);
+  ctx.font = `900 ${34 + R.signPulse * 6}px ${FONT}`; const mt = `${m.toLocaleString()}`; ctx.fillText(mt, x, top + 30);
   const mw = ctx.measureText(mt).width; ctx.font = `800 17px ${FONT}`; ctx.fillText("m", x + mw + 4, top + 30);
-  // dots
   drawDot(ctx, x + 7, top + 50, 7, SHOTS[Math.floor(now * 1.5) % 5].id);
   ctx.fillStyle = ink; ctx.font = `800 15px ${FONT}`; ctx.fillText(`${R.dots}`, x + 20, top + 55);
-  // next code
-  if (R.rw < REWARDS.length) { const r = REWARDS[R.rw]; ctx.globalAlpha = 0.62; ctx.font = `700 12px ${FONT}`; ctx.fillText(`${r.code} at ${r.m.toLocaleString()} m`, x + 20 + ctx.measureText(`${R.dots}`).width + 26, top + 55); ctx.globalAlpha = 1; }
-  // power pill + timer
-  let py = top + 70;
-  if (R.power) {
-    const s = SHOT[R.power.id], f = clamp(R.power.t / R.power.dur, 0, 1);
-    ctx.font = `800 13px ${FONT}`; const tw = ctx.measureText(s.tag).width + 26, ph = 28;
-    ctx.fillStyle = s.light; rr(ctx, x, py, tw, ph, ph / 2); ctx.fill();
-    ctx.save(); rr(ctx, x, py, tw, ph, ph / 2); ctx.clip(); ctx.fillStyle = s.color; ctx.fillRect(x, py, tw * f, ph); ctx.restore();
-    ctx.fillStyle = R.power.id === "sleep" ? "#fff" : INK; ctx.fillText(s.tag, x + 13, py + 19); py += 36;
+  if (!dash) {
+    if (R.rw < REWARDS.length) { const r = REWARDS[R.rw]; ctx.globalAlpha = 0.7; ctx.font = `700 12px ${FONT}`; ctx.fillText(`${r.code} at ${r.m.toLocaleString()} m`, x + 20 + ctx.measureText(`${R.dots}`).width + 26, top + 55); ctx.globalAlpha = 1; }
+    let py = top + 70;
+    if (R.power) { ctx.font = `800 13px ${FONT}`; powerPill(x, py, ctx.measureText(SHOT[R.power.id].tag).width + 30, 28, false, true); py += 36; }
+    if (R.nap) napPill(x, py, 210, 28);
   }
-  if (R.nap) { const s = SHOT.sleep; ctx.font = `800 13px ${FONT}`; const t = "& sweet dreams · nap ready", tw = ctx.measureText(t).width + 26; ctx.fillStyle = s.color; rr(ctx, x, py, tw, 28, 14); ctx.fill(); ctx.fillStyle = "#fff"; ctx.fillText(t, x + 13, py + 19); }
-  // pause button
-  const pr = pauseRect(); ctx.fillStyle = rgba(ink, 0.1); ctx.beginPath(); ctx.arc(pr.x, pr.y, pr.r, 0, 7); ctx.fill();
+  const pr = pauseRect(); ctx.fillStyle = rgba(ink, 0.12); ctx.beginPath(); ctx.arc(pr.x, pr.y, pr.r, 0, 7); ctx.fill();
   ctx.fillStyle = ink; ctx.fillRect(pr.x - 6, pr.y - 7, 4, 14); ctx.fillRect(pr.x + 2, pr.y - 7, 4, 14);
-  // power banner: a colour block across the column
+  if (dash) drawDash(m);
+  // power banner: a colour block across the column (landscape: a block at the top centre, clear of the road)
   if (R.banner) {
-    const s = SHOT[R.banner.id], t = R.banner.t, inT = clamp(t / 0.18, 0, 1), outT = clamp((t - 1.35) / 0.3, 0, 1);
-    const short = L.H < 560, bh = short ? Math.min(L.band - 8, 80) : 104, by = short ? L.groundPx + 6 : Math.round(L.H * 0.3);
-    const off = (1 - easeOut(inT)) * L.colW - easeIn(outT) * L.colW;
-    ctx.fillStyle = s.color; ctx.fillRect(L.colX + off, by, L.colW, bh);
-    const tx = L.colX + off + 20, light = R.banner.id === "sleep";
-    ctx.fillStyle = light ? "#fff" : INK; ctx.font = `600 ${short ? 12 : 14}px ${FONT}`; ctx.fillText("A shot of >", tx, by + (short ? 19 : 28));
-    const big = fitFont(ctx, 900, short ? Math.min(34, bh * 0.44) : 46, s.name, L.colW * 0.6, 20); ctx.fillText(s.name, tx, by + (short ? 19 : 28) + big * 0.95);
-    const nameW = ctx.measureText(s.name).width;
-    ctx.font = `800 17px ${FONT}`; const tagW = ctx.measureText(s.tag).width;
-    if (tx + nameW + 12 + tagW < L.colX + off + L.colW - 16) ctx.fillText(s.tag, tx + nameW + 12, by + 28 + big * 0.95);
-    else ctx.fillText(s.tag, tx, by + bh - 12);
+    const s = SHOT[R.banner.id], t = R.banner.t, inT = clamp(t / 0.18, 0, 1), outT = clamp((t - 1.35) / 0.3, 0, 1), light = R.banner.id === "sleep";
+    let bx, bw, bh, by;
+    if (L.land) { bw = Math.min(520, L.W - 2 * (x + 170)); bx = (L.W - bw) / 2; bh = 78; by = ins.t + 8 - (1 - easeOut(inT)) * 100 - easeIn(outT) * 100; }
+    else { bw = L.colW; bh = 104; by = Math.round(L.H * 0.3); bx = L.colX + (1 - easeOut(inT)) * L.colW - easeIn(outT) * L.colW; }
+    ctx.fillStyle = s.color; ctx.fillRect(bx, by, bw, bh);
+    const tx = bx + 20, small = bh < 90;
+    ctx.fillStyle = light ? "#fff" : INK; ctx.font = `600 ${small ? 13 : 14}px ${FONT}`; ctx.fillText("A shot of >", tx, by + (small ? 22 : 28));
+    const big = fitFont(ctx, 900, small ? 36 : 46, s.name, bw * 0.55, 20); const nb = by + (small ? 22 : 28) + big * 0.95; ctx.fillText(s.name, tx, nb);
+    const nameW = ctx.measureText(s.name).width; ctx.font = `800 17px ${FONT}`; const tagW = ctx.measureText(s.tag).width;
+    if (tx + nameW + 12 + tagW < bx + bw - 16) ctx.fillText(s.tag, tx + nameW + 12, nb); else ctx.fillText(s.tag, tx, by + bh - 12);
   }
-  // toasts (day, codes, saves)
-  const shortScr = L.H < 560;   // short landscape screens: toasts live in the bottom band, out of the play area
-  let ty = shortScr ? L.groundPx + 10 : ins.t + 120 + (R.power || R.nap ? 34 : 0);
-  for (const tt of (shortScr ? R.toasts.slice(-1) : R.toasts)) {
-    if (shortScr && R.banner) break;
+  // toasts (day, codes, saves): under the HUD; landscape: top centre, one at a time
+  let ty = L.land ? ins.t + 16 : ins.t + 84 + (!dash && (R.power || R.nap) ? 36 : 0);
+  for (const tt of (L.land ? R.toasts.slice(-1) : R.toasts)) {
+    if (L.land && R.banner) break;
     const a = clamp(Math.min(tt.t * 6, (1.9 - tt.t) * 4), 0, 1), lift = (1 - clamp(tt.t * 6, 0, 1)) * 10;
     ctx.globalAlpha = a; ctx.font = `800 ${tt.big ? 16 : 13}px ${FONT}`; ctx.textAlign = "center";
     const label = tt.color === null ? `${tt.text} >` : tt.text, tw = ctx.measureText(label).width + 28, ph = tt.big ? 36 : 30, cx = L.colX + L.colW / 2;
@@ -536,16 +541,67 @@ function drawHUD(P, now) {
     ctx.fillStyle = neutral && ink !== INK ? INK : "#fff"; ctx.fillText(label, cx, ty + lift + ph / 2 + 5);
     ctx.textAlign = "left"; ctx.globalAlpha = 1; ty += ph + 8;
   }
-  // first-run hint in the thumb zone
+  // first-run hint in the thumb zone (just below the street)
   const ha = clamp(Math.min(R.hintT * 4, (3.2 - R.hintT) * 3), 0, 1);
   if (ha > 0 && phase === "play") {
     const t = isTouch ? "TAP TO JUMP · HOLD TO GO HIGHER" : "SPACE / CLICK TO JUMP · HOLD TO GO HIGHER";
-    ctx.globalAlpha = ha; ctx.textAlign = "center"; const cx = L.colX + L.colW / 2, cy = L.groundPx + Math.min(L.band * 0.55, 120);
+    ctx.globalAlpha = ha; ctx.textAlign = "center"; const cx = L.colX + L.colW / 2, cy = L.groundPx + (dash ? 40 : L.band * 0.55);
     fitFont(ctx, 800, 13, t, L.colW - 64, 12); const tw = ctx.measureText(t).width + 30;
     ctx.fillStyle = "#fff"; rr(ctx, cx - tw / 2, cy - 17, tw, 34, 17); ctx.fill(); ctx.fillStyle = INK; ctx.fillText(t, cx, cy + 5);
-    if (isTouch) { const p = (now * 1.3) % 1; ctx.strokeStyle = rgba("#FFFFFF", 1 - p); ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(cx, cy - 46, 10 + p * 16, 0, 7); ctx.stroke(); ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(cx, cy - 46, 9, 0, 7); ctx.fill(); }
     ctx.globalAlpha = 1; ctx.textAlign = "left";
   }
+}
+/** Active power-up: its label line on a pill that drains in the shot colour (text stays legible over both halves). */
+function powerPill(x, y, w, h, withTime, onLight) {
+  const p = R.power, s = SHOT[p.id], f = clamp(p.t / p.dur, 0, 1), label = s.tag, fw = w * f;
+  ctx.save(); rr(ctx, x, y, w, h, h / 2); ctx.clip();
+  ctx.fillStyle = onLight ? s.light : "rgba(255,255,255,0.22)"; ctx.fillRect(x, y, w, h); ctx.fillStyle = s.color; ctx.fillRect(x, y, fw, h);
+  ctx.font = `800 ${h > 30 ? 15 : 13}px ${FONT}`; ctx.textBaseline = "middle";
+  const tl = withTime ? `${Math.max(0, p.t).toFixed(1)} s` : "";
+  for (const [cx0, cx1, col] of [[x, x + fw, p.id === "sleep" ? "#fff" : INK], [x + fw, x + w, onLight && p.id !== "sleep" ? INK : "#fff"]]) {
+    ctx.save(); ctx.beginPath(); ctx.rect(cx0, y, cx1 - cx0, h); ctx.clip(); ctx.fillStyle = col; ctx.textAlign = "left"; ctx.fillText(label, x + 14, y + h / 2 + 1);
+    if (tl) { ctx.textAlign = "right"; ctx.fillText(tl, x + w - 14, y + h / 2 + 1); } ctx.restore();
+  }
+  ctx.restore(); ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";
+}
+function napPill(x, y, w, h) {
+  const s = SHOT.sleep; ctx.fillStyle = s.color; rr(ctx, x, y, w, h, h / 2); ctx.fill();
+  ctx.fillStyle = "#fff"; ctx.font = `800 ${h > 30 ? 15 : 13}px ${FONT}`; ctx.textBaseline = "middle"; ctx.fillText("& sweet dreams · nap ready", x + 14, y + h / 2 + 1); ctx.textBaseline = "alphabetic";
+}
+/** The band below the street on tall screens: progress to the next code, and the active power-up's timer. */
+function drawDash(m) {
+  const x = L.colX + 16, w = L.colW - 32, rows = 1 + (R.power ? 1 : 0) + (R.nap ? 1 : 0), rowH = 34, gap = 8;
+  const ph = 18 + rows * rowH + (rows - 1) * gap, py = L.H - Math.max(ins.b, 8) - 10 - ph;
+  if (py < L.groundPx + 64) return;
+  ctx.fillStyle = "rgba(19,19,19,0.78)"; rr(ctx, x, py, w, ph, 18); ctx.fill();
+  let y = py + 9;
+  if (R.power) { powerPill(x + 9, y, w - 18, rowH, true); y += rowH + gap; }
+  if (R.nap) { napPill(x + 9, y, w - 18, rowH); y += rowH + gap; }
+  // progress to the next code
+  ctx.textBaseline = "middle"; const cy = y + rowH / 2;
+  if (R.rw < REWARDS.length) {
+    const r = REWARDS[R.rw], from = R.rw ? REWARDS[R.rw - 1].m : 0, f = clamp((m - from) / (r.m - from), 0, 1);
+    ctx.fillStyle = "#fff"; ctx.font = `900 15px ${FONT}`; ctx.textAlign = "left"; ctx.fillText(r.code, x + 18, cy + 1);
+    const lw = ctx.measureText(r.code).width; ctx.font = `700 13px ${FONT}`; ctx.textAlign = "right"; const rt = `${r.m.toLocaleString()} m`; ctx.fillText(rt, x + w - 18, cy + 1);
+    const bx = x + 18 + lw + 14, bw = w - 36 - lw - 28 - ctx.measureText(rt).width;
+    ctx.fillStyle = "rgba(255,255,255,0.22)"; rr(ctx, bx, cy - 4, bw, 8, 4); ctx.fill();
+    ctx.fillStyle = "#fff"; rr(ctx, bx, cy - 4, Math.max(8, bw * f), 8, 4); ctx.fill();
+  } else { ctx.fillStyle = "#fff"; ctx.font = `800 14px ${FONT}`; ctx.textAlign = "left"; ctx.fillText("Every code unlocked. You're in the draw.", x + 18, cy + 1); }
+  ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";
+}
+function drawTeach(ctx, it, x, now, fs) {
+  const low = it.type === "banner", label = low ? "STAY LOW" : "HOLD", bob = Math.sin(now * 6) * 2;
+  const cx = x + it.w / 2, yTop = -it.base - it.h;
+  const cy = low ? -(it.base + OB.banner.hang) + 26 + bob : yTop - 30 + bob;
+  ctx.font = `900 ${fs}px ${FONT}`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  const tw = ctx.measureText(label).width + fs * 2.6, ph = fs * 1.9;
+  ctx.fillStyle = INK; rr(ctx, cx - tw / 2, cy - ph / 2, tw, ph, ph / 2); ctx.fill();
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; rr(ctx, cx - tw / 2, cy - ph / 2, tw, ph, ph / 2); ctx.stroke();
+  ctx.fillStyle = "#fff"; ctx.fillText(label, cx - fs * 0.5, cy + 1);
+  // arrow: up for HOLD, down for STAY LOW
+  const ax = cx + tw / 2 - fs * 1.1, d = low ? 1 : -1; ctx.strokeStyle = SHOT.focus.color; ctx.lineWidth = 2.6; ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.beginPath(); ctx.moveTo(ax, cy - d * fs * 0.45); ctx.lineTo(ax, cy + d * fs * 0.45); ctx.moveTo(ax - fs * 0.32, cy + d * fs * 0.12); ctx.lineTo(ax, cy + d * fs * 0.45); ctx.lineTo(ax + fs * 0.32, cy + d * fs * 0.12); ctx.stroke();
+  ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";
 }
 const easeOut = (t) => 1 - Math.pow(1 - t, 3), easeIn = (t) => t * t * t;
 
@@ -604,7 +660,7 @@ function endRun() {
   $("cause").textContent = R.cause;
   $("score").textContent = score.toLocaleString();
   $("stDist").textContent = `${m.toLocaleString()} m`; $("stDots").textContent = R.dots; $("stBest").textContent = Math.max(best, score).toLocaleString();
-  $("bestNote").textContent = isBest && best > 0 ? "New personal best." : isBest ? "First run on the board. Nice." : `${(best - score).toLocaleString()} off your best.`;
+  $("bestNote").textContent = score <= 0 ? "" : isBest && best > 0 ? "New personal best." : isBest ? "First run done. Post it to get on the board." : score === best ? "Level with your best." : `${(best - score).toLocaleString()} off your best.`;
   const got = [...REWARDS].reverse().find((r) => m >= r.m), next = REWARDS.find((r) => m < r.m), rw = $("reward");
   if (got) {
     rw.className = "reward";
@@ -612,16 +668,16 @@ function endRun() {
   } else {
     const r = REWARDS[0], f = clamp(m / r.m, 0, 1);
     rw.className = "reward locked";
-    rw.innerHTML = `<div class="label">Run ${r.m} m to unlock &gt;</div><b>10% off</b><div class="bar"><i style="width:${(f * 100).toFixed(1)}%"></i></div><div class="t">${m.toLocaleString()} of ${r.m} m. So close you can taste it.</div>`;
+    rw.innerHTML = `<div class="label">Run ${r.m} m to unlock &gt;</div><b>10% off</b><div class="bar"><i style="width:${(f * 100).toFixed(1)}%"></i></div><div class="t">${m.toLocaleString()} of ${r.m} m. So close. One more lap?</div>`;
     if (m < 150) rw.querySelector(".t").textContent = `${m.toLocaleString()} of ${r.m} m. Warm-up lap. Go again.`;
   }
-  $("post").disabled = false; $("post").textContent = "Post score"; $("note").textContent = "";
+  $("post").disabled = score <= 0; $("post").textContent = "Post score"; $("note").textContent = score <= 0 ? "Run a few metres first, then post." : "";
   $("name").value = savedName();
   $("end").classList.remove("hidden"); $("end").scrollTop = 0;
   board.load();
 }
 async function postScore() {
-  if (!lastScore || posted) return;
+  if (!lastScore || posted || lastScore.score <= 0) return;
   const name = $("name").value.trim().toUpperCase().slice(0, 12);
   if (!name) { $("note").textContent = "Add a name for the board first."; $("name").focus(); return; }
   const btn = $("post"); btn.disabled = true; btn.textContent = "Posting…"; $("note").textContent = "";
@@ -629,7 +685,7 @@ async function postScore() {
     const r = await board.post({ name, score: lastScore.score, round: Math.max(1, Math.floor(lastScore.m / 1000)), detail: lastScore.dots });
     posted = true;
     if (r.status === "review") { btn.textContent = "Held"; $("note").textContent = "That name needs a quick human check before it goes on the board. Your score is saved."; }
-    else { btn.textContent = "Posted"; $("note").textContent = "You're on the board."; }
+    else { btn.textContent = "Posted"; $("note").textContent = "You're on the board."; if ($("bestNote").textContent.startsWith("First run")) $("bestNote").textContent = "First run, straight on the board. Nice."; }
   } catch { btn.disabled = false; btn.textContent = "Offline — try again"; }
 }
 $("play").addEventListener("click", play);
@@ -649,7 +705,7 @@ window.__game = {
   skipTo: (metres) => {
     if (!R) return; const keep = { dots: R.dots, power: R.power, nap: R.nap };
     const S = newHero(metres * U); S.t = R.S.t; R.S = S; R.W = createWorld(R.seed, metres); R.prev = { x: S.x, y: 0, t: S.t };
-    R.rw = REWARDS.filter((r) => metres >= r.m).length; R.dayI = dayAt(metres).i; R.cmds = []; R.cur = null; R.lastPlan = -9; R.knocked = []; Object.assign(R, keep);
+    R.rw = REWARDS.filter((r) => metres >= r.m).length; R.dayI = dayAt(metres).i; R.dayId = dayAt(metres).id; R.cmds = []; R.cur = null; R.lastPlan = -9; R.knocked = []; Object.assign(R, keep);
     R.zoom = clamp((S.v - V0) / (VMAX - V0), 0, 1); city.reset();
   },
   invincible: (on = true) => { invincible = !!on; },

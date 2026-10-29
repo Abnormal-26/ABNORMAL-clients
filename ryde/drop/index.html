@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="theme-color" content="#ffffff">
 <title>Ryde: Drop Shot</title>
-<meta name="description" content="Drop the day's moments into a giant Ryde: bottle. Match two to make the next one up. A Black Friday giveaway game concept.">
+<meta name="description" content="Drop the day's moments into a giant Ryde: bottle. Two the same make the next one up. A Black Friday giveaway game concept.">
 <meta property="og:title" content="Ryde: Drop Shot">
-<meta property="og:description" content="Drop the day's moments into a giant Ryde: bottle. Match two, build your whole day, win a year of Ryde.">
+<meta property="og:description" content="Drop the day's moments into a giant Ryde: bottle. Build your whole day and you could win a year of Ryde.">
 <meta property="og:type" content="website">
 <link rel="preload" href="../shared/fonts/inter-tight-latin-900-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="../shared/ui.css">
@@ -25,6 +25,9 @@
   .hero .display { font-size: clamp(54px, 17vw, 84px); }
   .hero canvas { width: 100%; height: 108px; display: block; margin: 2px 0 0; }
   .hero .lede { max-width: 30ch; }
+  .order { margin: -4px 0 2px; font-size: 13px; font-weight: 800; line-height: 1.5; display: flex; flex-wrap: wrap; column-gap: 0; }
+  .order span:not(:last-child)::after { content: ">"; color: rgba(19,19,19,0.4); margin: 0 6px; }
+  .namerow[hidden] { display: none; }
   .rewards { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
   .rewards li { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 700; }
   .rewards li b { font-weight: 900; min-width: 52px; font-variant-numeric: tabular-nums; }
@@ -77,9 +80,10 @@
       <button class="btn small ghost snd" data-snd></button>
     </div>
     <div class="c1"><div class="block stone hero">
-      <p class="eyebrow">A shot of</p>
+      <p class="eyebrow">Build your day</p>
       <h1 class="display">Drop<br>Shot.</h1>
       <canvas id="herochain" aria-hidden="true"></canvas>
+      <p class="order"><span>Energy</span><span>Focus</span><span>Exercise</span><span>Relax</span><span>Sleep</span><span>Ryde:</span><span>Rhythm</span><span>Your Day</span></p>
       <p class="lede">Drop the day's moments into the bottle. Two the same make the next one up. Build your whole day before it's full.</p>
     </div></div>
     <div class="c2">
@@ -88,9 +92,9 @@
     <div class="block mist">
       <p class="sect" style="margin-bottom:10px">Black Friday rewards</p>
       <ul class="rewards">
-        <li style="--c:var(--energy)"><b>1,000</b><span>10% off the range</span></li>
-        <li style="--c:var(--exercise)"><b>2,500</b><span>15% off the range</span></li>
-        <li style="--c:var(--sleep)"><b>5,000</b><span>20% off + in the draw for a year of Ryde</span></li>
+        <li style="--c:var(--energy)"><b>1,150</b><span>10% off the range</span></li>
+        <li style="--c:var(--exercise)"><b>1,600</b><span>15% off the range</span></li>
+        <li style="--c:var(--sleep)"><b>4,000</b><span>20% off + in the draw for a year of Ryde</span></li>
       </ul>
     </div>
     <div class="board"><h3>Top 10 this week</h3><ol id="board1"><li class="empty">Loading…</li></ol></div>
@@ -125,7 +129,7 @@
     </div>
     <canvas id="endchain" aria-hidden="true"></canvas>
     <div class="reward" id="reward"></div></div>
-    <div class="c2"><div class="namerow">
+    <div class="c2"><div class="namerow" id="namerow">
       <input id="name" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="YOUR NAME" aria-label="Your name for the leaderboard">
       <button class="btn small" id="post">Post score</button>
     </div>

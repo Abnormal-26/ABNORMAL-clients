@@ -12,26 +12,29 @@
 
 export const CLOCK_START = 6, CLOCK_END = 22.5; // hours shown on the HUD clock (first card → LIGHTS OUT)
 
-// One obvious moment, one shot. [label, [fromHour, toHour]]. Labels with a printed time
-// only appear within ±40 min of it.
-// ENERGY = early starts and the arvo slump · FOCUS = work/study/thinking · EXERCISE = clearly physical
+// One obvious moment, one shot. [label, [fromHour, toHour], weekdays?]. Labels with a printed time
+// only appear within ±40 min of it; labels tied to a day of the week only appear on that day.
+// ENERGY = early starts and the post-lunch slump · FOCUS = work/study/thinking · EXERCISE = clearly physical
 // RELAX = late-arvo / evening downtime · SLEEP = night and bedtime. "LIGHTS OUT" ends every day.
+export const WEEKDAYS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
+const WORK = ["MON", "TUE", "WED", "THU", "FRI"], WEEKEND = ["SAT", "SUN"];
 export const MOMENTS = {
   energy: [
-    ["6:30 ALARM", [5.83, 7.17]], ["EARLY START", [6, 8]], ["MONDAY, AGAIN", [6, 9.5]], ["FIRST DAY BACK", [6, 9]],
-    ["4 DAYS TO FRIDAY", [6, 9.5]], ["3PM SLUMP", [14.33, 15.67]], ["ARVO SLUMP", [13.5, 16]],
+    ["6:30 ALARM", [5.83, 7.17], WORK], ["EARLY START", [6, 8]], ["MONDAY, AGAIN", [6, 9.5], ["MON"]], ["FIRST DAY BACK", [6, 9], ["MON"]],
+    ["4 DAYS TO FRIDAY", [6, 9.5], ["MON"]], ["HUMP DAY", [6, 9.5], ["WED"]], ["3PM SLUMP", [14.33, 15.67]], ["POST-LUNCH SLUMP", [13.5, 16]],
   ],
   focus: [
-    ["9:00 STAND-UP", [8.33, 9.67]], ["DEADLINE", [9, 18]], ["EXAM", [8.5, 16]], ["BIG PITCH", [9, 17]],
-    ["SPREADSHEET", [9, 17.5]], ["BAS DUE", [9, 17]], ["TAX RETURN", [9, 20]], ["STUDY SESH", [9, 20.5]],
+    ["9:00 STAND-UP", [8.33, 9.67], WORK], ["DEADLINE", [9, 18], WORK], ["EXAM", [8.5, 16], WORK], ["BIG PITCH", [9, 17], WORK],
+    ["SPREADSHEET", [9, 17.5], WORK], ["BAS DUE", [9, 17], WORK], ["TAX RETURN", [9, 20]], ["STUDY SESH", [9, 20.5]], ["FLAT-PACK BUILD", [9, 18], WEEKEND],
   ],
   exercise: [
-    ["RUN CLUB", [6, 8]], ["PARKRUN", [7.33, 8.67]], ["OCEAN SWIM", [6, 10]], ["BOOTCAMP", [6, 8.5]],
-    ["LEG DAY", [6, 20]], ["SPIN CLASS", [6, 20]], ["PILATES", [6, 20]], ["LUNCH RUN", [11.5, 14]], ["SOCIAL NETBALL", [17.5, 21]],
+    ["RUN CLUB", [6, 8]], ["PARKRUN", [7.33, 8.67], ["SAT"]], ["OCEAN SWIM", [6, 10]], ["BOOTCAMP", [6, 8.5], WORK],
+    ["LEG DAY", [6, 20]], ["SPIN CLASS", [6, 20]], ["PILATES", [6, 20]], ["LUNCH RUN", [11.5, 14], WORK], ["SOCIAL NETBALL", [17.5, 21], WORK],
+    ["SATURDAY SPORT", [7.5, 13], ["SAT"]],
   ],
   relax: [
-    ["FEET UP", [16, 22.5]], ["COUCH O'CLOCK", [17, 22.5]], ["FRIDAY ARVO", [16, 19]], ["BACKYARD ARVO", [16, 18.5]],
-    ["TAKEAWAY NIGHT", [17.5, 21]], ["BOOK CLUB", [18, 22]], ["BATH TIME", [18.5, 22.5]], ["VEG OUT", [16, 22.5]],
+    ["FEET UP", [16, 22.5]], ["COUCH O'CLOCK", [17, 22.5]], ["FRIDAY ARVO", [16, 19], ["FRI"]], ["SUNDAY ARVO", [16, 19], ["SUN"]],
+    ["BACKYARD ARVO", [16, 18.5]], ["TAKEAWAY NIGHT", [17.5, 21]], ["BOOK CLUB", [18, 22]], ["BATH TIME", [18.5, 22.5]], ["VEG OUT", [16, 22.5]],
   ],
   sleep: [
     ["BIG DAY TOMORROW", [21, 22.5]], ["DOONA TIME", [21, 22.5]], ["PHONE DOWN", [21.5, 22.5]], ["PJS ON", [21, 22.5]],
@@ -83,7 +86,9 @@ function pickWeighted(r, weights) {
   const ks = Object.keys(weights).filter((k) => weights[k] > 0); let tot = 0; ks.forEach((k) => (tot += weights[k]));
   let x = r() * tot; for (const k of ks) { x -= weights[k]; if (x <= 0) return k; } return ks[ks.length - 1];
 }
-const inWin = (m, h) => h >= m[1][0] && h <= m[1][1];
+const inWin = (m, h, wd) => h >= m[1][0] && h <= m[1][1] && (!m[2] || m[2].includes(wd));
+/** Day 1 is a Monday, Day 2 a Tuesday … wrapping after Sunday. */
+export const weekdayOf = (day) => WEEKDAYS[(Math.max(1, day | 0) - 1) % 7];
 /** Clock hour for a step, given the first and last card steps (the HUD uses the same mapping). */
 export function hourAt(step, firstStep, lastStep) { return CLOCK_START + ((step - firstStep) / Math.max(1, lastStep - firstStep)) * (CLOCK_END - CLOCK_START); }
 
@@ -92,7 +97,7 @@ export function hourAt(step, firstStep, lastStep) { return CLOCK_START + ((step 
  * step = 16th-note index from the start of the song.
  */
 export function buildChart(day, seed, { coach = false } = {}) {
-  const spec = daySpec(day), I = spec.intro;
+  const spec = daySpec(day), I = spec.intro, wd = weekdayOf(day);
   const r = rng(seed * 7919 + day * 104729);
   const tier = day <= 1 ? 1 : day === 2 ? 2 : day === 3 ? 3 : 4;
   const firstBar = I, lastBar = I + 4 * spec.bps - 1;          // lastBar holds LIGHTS OUT on its downbeat
@@ -120,7 +125,7 @@ export function buildChart(day, seed, { coach = false } = {}) {
       else {
         // only shots with a moment that fits the clock right now
         const prev = cards.length ? cards[cards.length - 1].text : "";
-        const ok = {}; for (const k of LANES) ok[k] = MOMENTS[k].filter((m) => inWin(m, hour) && m[0] !== prev);
+        const ok = {}; for (const k of LANES) ok[k] = MOMENTS[k].filter((m) => inWin(m, hour, wd) && m[0] !== prev);
         const w = {};
         for (const k of LANES) if (ok[k].length) w[k] = (sec.weights[k] || 0) + (tier >= 3 ? 0.05 * (tier - 2) : 0);
         if (!Object.values(w).some((v) => v > 0)) for (const k of LANES) if (ok[k].length) w[k] = 1;
@@ -137,6 +142,6 @@ export function buildChart(day, seed, { coach = false } = {}) {
     }
   }
   const sectionOfBar = (bar) => (bar < firstBar ? "intro" : bar > lastBar ? "outro" : SECTIONS[Math.min(3, Math.floor((bar - firstBar) / spec.bps))].id);
-  return { spec, cards, sectionOfBar, firstBar, lastBar, firstStep, lastStep, totalSteps: spec.bars * 16 };
+  return { spec, weekday: wd, cards, sectionOfBar, firstBar, lastBar, firstStep, lastStep, totalSteps: spec.bars * 16 };
 }
 function pick(r, arr) { return arr[Math.floor(r() * arr.length)]; }

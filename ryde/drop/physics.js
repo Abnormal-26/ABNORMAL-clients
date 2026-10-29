@@ -41,7 +41,7 @@ export function createWorld(cfg = {}) {
     maxSpeed: 38,
     mergeGap: 0.05,                   // two same-tier pieces closer than this are "touching"
     jam: 0.06,                        // overlap beyond this counts as a jam (see geom)
-    magnet: 9, magnetRange: 0.45,     // same-tier pieces this close drift together (u/s²), so near-misses merge
+    magnet: 7, magnetRange: 0.11,     // same-tier pieces within ~3–4 px drift together (u/s²); further apart stays a miss
     pushFresh: 16, freshAge: 0.35,    // a just-merged piece shoves what it engulfed out this fast
   }, cfg);
 
@@ -57,7 +57,7 @@ export function createWorld(cfg = {}) {
     bodies.push(b);
     return b;
   }
-  function remove(b) { const i = bodies.indexOf(b); if (i >= 0) bodies.splice(i, 1); wakeAll(); }
+  function remove(b) { const i = bodies.indexOf(b); if (i >= 0) bodies.splice(i, 1); b.asleep = false; b.removed = true; wakeAll(); }
   function wakeAll() { for (const b of bodies) { b.asleep = false; b.sleepT = 0; } }
   function wakeIsland(id) { if (!id) return; for (const b of bodies) if (b.asleep && b.island === id) { b.asleep = false; b.sleepT = 0; } }
   function wake(b) { if (b.asleep) wakeIsland(b.island); b.asleep = false; b.sleepT = 0; }
@@ -146,8 +146,14 @@ export function createWorld(cfg = {}) {
         if (A.tier === B.tier) m = Math.max(m, P.magnetRange + 0.02);
         const dx = B.x - A.x, dy = B.y - A.y, rr = A.r + B.r + m;
         if (dx * dx + dy * dy > rr * rr) continue;
-        // an awake piece about to touch a sleeping pile wakes the pile
-        if (A.asleep) wake(A); else if (B.asleep) wake(B);
+        // an awake piece touching, or closing in on, a sleeping pile wakes the pile. Mere proximity doesn't:
+        // that used to let two neighbouring piles keep waking each other forever.
+        if (A.asleep || B.asleep) {
+          const d = Math.sqrt(dx * dx + dy * dy) || 1e-9, gap = d - A.r - B.r;
+          const vn = ((B.vx - A.vx) * dx + (B.vy - A.vy) * dy) / d;            // < 0 = approaching
+          if (gap > 0.01 && (vn > -0.05 || gap > -vn * dt * 2 + 0.01)) continue;
+          if (A.asleep) wake(A); else wake(B);
+        }
         const lo = A.id < B.id ? A : B, hi = lo === A ? B : A;
         out.push(makeContact(lo, hi, PAIR, 1e6 + lo.id * 65536 + hi.id));
       }
@@ -275,9 +281,14 @@ export function createWorld(cfg = {}) {
 
     // keep impulses for next frame + emit impacts
     const nw = new Map();
+    // sleeping piles aren't gathered, so carry their stored impulses over: when they wake they're still
+    // holding each other up instead of sagging for a few frames (which used to wake the neighbours)
+    for (const [k, v] of warm) if (v.A.asleep && !v.A.removed && (!v.B || (v.B.asleep && !v.B.removed))) nw.set(k, v);
     for (const c of cs) {
-      nw.set(c.key, { ni: c.ni, ti: c.ti, ri: c.ri });
+      nw.set(c.key, { ni: c.ni, ti: c.ti, ri: c.ri, A: c.A, B: c.B });
       if (c.s < -P.jam) { c.A.sleepT = -1; if (c.B) c.B.sleepT = -1; }   // still jammed: not allowed to sleep
+      // a same-tier neighbour within magnet range: never let that pair fall asleep un-merged
+      if (c.B && c.A.tier === c.B.tier && c.s < P.magnetRange) { c.A.sleepT = -1; c.B.sleepT = -1; }
       if (c.maxNi > 0) {
         c.A.landed = true; if (c.B) c.B.landed = true;
         c.A.contactT = time; if (c.B) c.B.contactT = time;
@@ -318,7 +329,10 @@ export function createWorld(cfg = {}) {
       for (let j = i + 1; j < bodies.length; j++) {
         const B = bodies[j]; if (used.has(B) || B.tier !== A.tier || B.data?.noMerge) continue;
         const d = Math.hypot(B.x - A.x, B.y - A.y);
-        if (d - A.r - B.r < P.mergeGap) { out.push([A, B]); used.add(A); used.add(B); break; }
+        const gap = d - A.r - B.r;
+        // touching, or resting a hair apart (inside magnet range) with nothing left to close the gap
+        const resting = gap < P.magnetRange && Math.hypot(A.vx, A.vy) < 0.15 && Math.hypot(B.vx, B.vy) < 0.15;
+        if (gap < P.mergeGap || resting) { out.push([A, B]); used.add(A); used.add(B); break; }
       }
     }
     return out;
@@ -342,5 +356,5 @@ export function createWorld(cfg = {}) {
 
   function drainEvents() { return events.splice(0, events.length); }
 
-  return { P, bodies, add, remove, step, wake, wakeAll, touchingPairs, landingY, drainEvents, get time() { return time; } };
+  return { P, bodies, add, remove, step, wake, wakeAll, touchingPairs, landingY, drainEvents, get time() { return time; }, get warmSize() { return warm.size; } };
 }

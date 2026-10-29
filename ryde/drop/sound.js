@@ -37,6 +37,7 @@ export function createSound(A) {
   function bell(m, when, vol = 0.16, dur = 1.1) {
     const C = A.ctx, f = mtof(m);
     [[1, vol, dur], [2.76, vol * 0.22, dur * 0.45], [5.4, vol * 0.07, dur * 0.2]].forEach(([k, v, d]) => {
+      if (f * k > 16000) return;                       // drop overtones above 16 kHz (inaudible, and out of range on high chain notes)
       const o = C.createOscillator(), g = C.createGain(); o.type = "sine"; o.frequency.value = f * k;
       g.gain.setValueAtTime(0.0001, when); g.gain.exponentialRampToValueAtTime(v, when + 0.006); g.gain.exponentialRampToValueAtTime(0.0001, when + d);
       o.connect(g); g.connect(sfx); o.start(when); o.stop(when + d + 0.05);

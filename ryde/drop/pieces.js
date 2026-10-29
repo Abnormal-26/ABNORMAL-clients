@@ -22,26 +22,22 @@ export const tierInfo = (t) => (t >= 9 ? WELLBEING : TIERS[Math.max(1, Math.min(
 
 // ---------- icons (unit space: the dot's radius is 1) ----------
 const WHITE = "#FFFFFF";
+// Energy, "& a jetpack": two bold white tanks joined by a strap bar, two short flames. No fine detail,
+// so it still reads on the smallest piece.
 function jetpack(c) {
-  c.translate(0, -0.06);
-  c.fillStyle = INK; c.strokeStyle = INK; c.lineCap = "round";
-  // carry handle + straps make it read as a pack, not binoculars
-  c.lineWidth = 0.075; c.beginPath(); c.arc(0, -0.34, 0.12, Math.PI, 0); c.stroke();
-  roundRect(c, -0.37, -0.36, 0.28, 0.58, 0.14); c.fill();
-  roundRect(c, 0.09, -0.36, 0.28, 0.58, 0.14); c.fill();
-  roundRect(c, -0.14, -0.38, 0.28, 0.5, 0.07); c.fill();        // pack body between the tanks
-  c.fillStyle = "#FFC845"; roundRect(c, -0.07, -0.24, 0.14, 0.09, 0.03); c.fill();   // a little yellow dial
-  for (const x of [-0.23, 0.23]) {
-    c.fillStyle = INK;
-    c.beginPath(); c.moveTo(x - 0.09, 0.21); c.lineTo(x + 0.09, 0.21); c.lineTo(x + 0.06, 0.29); c.lineTo(x - 0.06, 0.29); c.closePath(); c.fill();
-    c.fillStyle = "#FFC845";                               // flame in Focus yellow
-    c.beginPath(); c.moveTo(x, 0.31); c.quadraticCurveTo(x - 0.13, 0.46, x, 0.66); c.quadraticCurveTo(x + 0.13, 0.46, x, 0.31); c.fill();
-    c.fillStyle = WHITE;
-    c.beginPath(); c.moveTo(x, 0.34); c.quadraticCurveTo(x - 0.05, 0.43, x, 0.52); c.quadraticCurveTo(x + 0.05, 0.43, x, 0.34); c.fill();
+  c.translate(0, -0.08);
+  c.fillStyle = WHITE; c.strokeStyle = WHITE; c.lineCap = "round";
+  c.lineWidth = 0.11; c.beginPath(); c.arc(0, -0.3, 0.2, Math.PI * 1.05, Math.PI * 1.95); c.stroke();   // shoulder strap loop
+  roundRect(c, -0.37, -0.36, 0.31, 0.56, 0.155); c.fill();       // left tank
+  roundRect(c, 0.06, -0.36, 0.31, 0.56, 0.155); c.fill();        // right tank
+  c.fillRect(-0.08, -0.3, 0.16, 0.08);                            // strap bar joining them at the top
+  for (const x of [-0.215, 0.215]) {
+    c.fillStyle = WHITE; c.beginPath(); c.moveTo(x - 0.1, 0.18); c.lineTo(x + 0.1, 0.18); c.lineTo(x + 0.065, 0.28); c.lineTo(x - 0.065, 0.28); c.closePath(); c.fill();   // nozzle
+    c.fillStyle = "#FFC845";
+    c.beginPath(); c.moveTo(x - 0.1, 0.29); c.quadraticCurveTo(x - 0.09, 0.5, x, 0.66); c.quadraticCurveTo(x + 0.09, 0.5, x + 0.1, 0.29); c.closePath(); c.fill();
+    c.fillStyle = "#FF8A3D";
+    c.beginPath(); c.moveTo(x - 0.045, 0.29); c.quadraticCurveTo(x - 0.04, 0.41, x, 0.5); c.quadraticCurveTo(x + 0.04, 0.41, x + 0.045, 0.29); c.closePath(); c.fill();
   }
-  c.fillStyle = "rgba(255,255,255,0.5)";
-  roundRect(c, -0.32, -0.28, 0.06, 0.32, 0.03); c.fill();
-  roundRect(c, 0.27, -0.28, 0.06, 0.32, 0.03); c.fill();
 }
 function bulb(c) {
   c.translate(0, 0.07);
@@ -58,8 +54,10 @@ function bulb(c) {
   c.fillStyle = INK; roundRect(c, -0.14, 0.26, 0.28, 0.075, 0.035); c.fill(); roundRect(c, -0.105, 0.36, 0.21, 0.075, 0.035); c.fill();
 }
 function sneaker(c) {
+  // white trainer on teal; the dark teal picks out sole line and laces
   c.translate(-0.01, 0.02);
-  c.fillStyle = INK;
+  const dark = "#047E6F";
+  c.fillStyle = WHITE;
   c.beginPath();
   c.moveTo(-0.5, 0.14); c.lineTo(0.5, 0.14);
   c.quadraticCurveTo(0.58, 0.12, 0.54, 0.03);
@@ -70,14 +68,10 @@ function sneaker(c) {
   c.quadraticCurveTo(-0.37, -0.22, -0.45, -0.33);
   c.quadraticCurveTo(-0.55, -0.1, -0.5, 0.14);
   c.closePath(); c.fill();
-  // sole
-  c.fillStyle = WHITE; roundRect(c, -0.53, 0.13, 1.1, 0.13, 0.065); c.fill();
-  c.fillStyle = INK; roundRect(c, -0.5, 0.215, 1.04, 0.05, 0.025); c.fill();
-  // laces
-  c.strokeStyle = WHITE; c.lineWidth = 0.06; c.lineCap = "round";
+  roundRect(c, -0.53, 0.12, 1.1, 0.14, 0.07); c.fill();                 // sole
+  c.fillStyle = dark; roundRect(c, -0.5, 0.115, 1.04, 0.045, 0.02); c.fill();   // midsole line
+  c.strokeStyle = dark; c.lineWidth = 0.065; c.lineCap = "round";
   for (const [x, y] of [[0.06, -0.06], [-0.04, -0.13], [-0.13, -0.2]]) { c.beginPath(); c.moveTo(x - 0.05, y - 0.06); c.lineTo(x + 0.06, y + 0.05); c.stroke(); }
-  // heel stripe
-  c.beginPath(); c.moveTo(-0.38, -0.12); c.quadraticCurveTo(-0.3, 0.0, -0.36, 0.08); c.stroke();
 }
 function sock(c) {
   c.translate(-0.14, -0.02);

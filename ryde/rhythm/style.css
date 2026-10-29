@@ -107,3 +107,4 @@ canvas.play { background: var(--stone); }
 .calpad.on { background: var(--exercise); color: var(--ink); }
 .cal-row { justify-content: center; }
 #timing .note { text-align: center; min-height: 1.4em; }
+.namerow[hidden] { display: none; }
