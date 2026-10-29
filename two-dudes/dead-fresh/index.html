@@ -14,7 +14,7 @@
       * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
       html, body { margin: 0; height: 100%; overflow: hidden; background: var(--green); color: var(--cream);
         font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; user-select: none; -webkit-user-select: none; }
-      canvas { position: fixed; inset: 0; display: block; touch-action: none; }
+      canvas { position: fixed; inset: 0; display: block; touch-action: none; -webkit-touch-callout: none; -webkit-user-select: none; }
       .screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
         text-align: center; padding: 0 0 28px; gap: 8px; z-index: 5; overflow-y: auto; background: var(--green); }
       .screen.hidden { display: none; }
@@ -56,6 +56,18 @@
         color: var(--cream); font-weight: 800; font-size: 16px; text-transform: uppercase; letter-spacing: 0.06em; }
       .namerow button { padding: 14px 18px; border-radius: 12px; border: 0; background: var(--lime); color: var(--ink); font-weight: 900; font-size: 15px; cursor: pointer; }
       #endTop { margin-top: 10px; }
+      .endR { display: contents; }
+      @media (orientation: landscape) and (max-height: 520px) {
+        #end .inner { max-width: 780px; display: grid; grid-template-columns: 1fr 1fr; column-gap: 24px; row-gap: 6px; align-items: start; justify-items: center; padding-top: 14px !important; }
+        #end .inner > * { grid-column: 1; }
+        #end .endR { grid-column: 2; grid-row: 1 / span 9; display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; }
+        #end #endTop { margin-top: 0; }
+        #end #endList { max-height: 128px; overflow-y: auto; }
+        #end h1 { font-size: 44px; }
+        #end .stats b { font-size: 22px; }
+        #end .reward { padding: 8px 14px; }
+        #end .reward b { font-size: 22px; }
+      }
       .pick { width: 100%; text-align: left; }
       .pick h3 { margin: 4px 0 8px; font-size: 11px; letter-spacing: 0.18em; color: var(--lime); font-weight: 900; }
       .pick h3 span { opacity: 0.5; color: var(--cream); letter-spacing: 0; font-weight: 700; text-transform: none; margin-left: 6px; }
@@ -80,7 +92,7 @@
         <div class="logo">TWO DUDES PRESENTS</div>
         <h1>DEAD<br />FRESH</h1>
         <p class="sub">15 floors. One deodorant.</p>
-        <p class="how">The office has turned. B.O. zombies on every floor, the Head of Sales on five, the CFO on ten, the CEO on fifteen. Hit a zombie with a stick and he’s a normal dude again. Hit a colleague and he spills his coffee. Zombies turn colleagues, so keep them fresh. Walk over <b>charcoal</b>, <b>sage</b>, <b>kawakawa</b>, <b>six-packs</b> and clean <b>tees</b>.<br /><span id="ctl">Left thumb moves. Right thumb looks. Tap the right side to throw.</span></p>
+        <p class="how">The office has turned. B.O. zombies on every floor, the Head of Sales on five, the CFO on ten, the CEO on fifteen. Hit a zombie with a stick and he’s a normal dude again. Hit a colleague and he spills his coffee. Zombies turn colleagues, so keep them fresh. Walk over <b>charcoal</b>, <b>sage</b>, <b>kawakawa</b>, <b>six-packs</b> and clean <b>tees</b>.<br /><span id="ctl">Left thumb walks and turns. Hold your right thumb to throw, drag it to aim.</span></p>
         <div class="pick"><h3>PICK YOUR SCENT <span>it sets the soundtrack</span></h3>
           <div class="tracks">
             <button type="button" class="track" data-m="coconut"><b>Coconut Rush</b><span>Liquid Memoirs</span></button>
@@ -102,6 +114,7 @@
         <div class="reward" id="reward"><span class="label">YOUR REWARD</span><b id="rewardCode"></b><span class="t" id="rewardText"></span></div>
         <div class="namerow" id="nameRow"><input id="name" maxlength="12" placeholder="YOUR NAME" autocomplete="off" /><button id="post" type="button">Post score</button></div>
         <p class="tiny note" id="postNote"></p>
+        <div class="endR">
         <div class="board" id="endTop"><h3>GLOBAL SCOREBOARD</h3><ol id="endList"><li class="empty">Connecting…</li></ol></div>
         <div class="pick small"><h3>PICK YOUR SCENT <span>it sets the soundtrack</span></h3>
           <div class="tracks">
@@ -111,6 +124,7 @@
           </div></div>
         <button class="big" id="again" type="button">Go again</button>
         <button class="snd" type="button">Sound on</button>
+        </div>
         <p class="tiny">Prototype · discount codes are placeholders</p>
       </div>
     </section>

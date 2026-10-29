@@ -91,20 +91,55 @@ function floorTex(x, y) { const c = (MAP[y] || "")[x]; return c === ":" ? "floor
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 let W = 0, H = 0, U = 0, COLS = 0, CW = 2, FW = 160, RS = 3, FROWS = 0, offF, offC, fctx, cctx, fImg, cImg, fBuf, cBuf;
+// SW/SH = whole screen. W/H = the game viewport, offset by VX/VY. On a phone held upright the
+// viewport is a squarish screen at the top and the controls live in a panel underneath (handheld
+// layout); everywhere else the viewport is the whole screen and the controls float over it.
+let SW = 0, SH = 0, VX = 0, VY = 0, DPR = 1, PORTRAIT = false, INS = { t: 0, r: 0, b: 0, l: 0 };
+const CTRL = { jx: 0, jy: 0, jr: 56, bx: 0, by: 0, br: 52, p0: 0, p1: 0, dead: 12 };
+let moveStick = null, lookDrag = null;
+const TOUCH = matchMedia("(pointer: coarse)").matches || navigator.maxTouchPoints > 0 && matchMedia("(hover: none)").matches;
+const insProbe = document.createElement("div");
+insProbe.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)";
+document.body.appendChild(insProbe);
+function readInsets() { const cs = getComputedStyle(insProbe); return { t: parseFloat(cs.paddingTop) || 0, r: parseFloat(cs.paddingRight) || 0, b: parseFloat(cs.paddingBottom) || 0, l: parseFloat(cs.paddingLeft) || 0 }; }
 function resize() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  W = window.innerWidth; H = window.innerHeight; U = Math.min(W, H);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2); DPR = dpr;
+  SW = window.innerWidth; SH = window.innerHeight; INS = readInsets();
+  const wasPortrait = PORTRAIT;
+  PORTRAIT = TOUCH && SH > SW * 1.15;
+  if (wasPortrait !== PORTRAIT) { moveStick = null; lookDrag = null; }
+  if (PORTRAIT) { VX = 0; VY = Math.round(INS.t); W = SW; H = Math.round(Math.min(SW * 1.02, (SH - INS.t) * 0.56)); }
+  else { VX = 0; VY = 0; W = SW; H = SH; }
+  U = Math.min(W, H);
   CW = 2; COLS = Math.ceil(W / CW);
-  canvas.width = W * dpr; canvas.height = H * dpr; canvas.style.width = W + "px"; canvas.style.height = H + "px";
+  canvas.width = SW * dpr; canvas.height = SH * dpr; canvas.style.width = SW + "px"; canvas.style.height = SH + "px";
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.imageSmoothingEnabled = true;
+  layoutControls();
   FW = W > 700 ? Math.min(360, Math.ceil(W / 3.2)) : Math.min(176, Math.ceil(W / 2.4)); RS = W > 700 ? 2 : (H > 900 ? 4 : 3); FROWS = Math.ceil(H * 0.56 / RS);
   offF = document.createElement("canvas"); offF.width = FW; offF.height = FROWS; fctx = offF.getContext("2d"); fImg = fctx.createImageData(FW, FROWS); fBuf = new Uint32Array(fImg.data.buffer);
   offC = document.createElement("canvas"); offC.width = FW; offC.height = FROWS; cctx = offC.getContext("2d"); cImg = cctx.createImageData(FW, FROWS); cBuf = new Uint32Array(cImg.data.buffer);
 }
-window.addEventListener("resize", resize); resize();
+function layoutControls() {
+  const edge = 24;
+  if (PORTRAIT) {
+    CTRL.p0 = VY + H; CTRL.p1 = SH - INS.b;
+    const ph = CTRL.p1 - CTRL.p0;
+    CTRL.jr = Math.max(48, Math.min(70, SW * 0.15)); CTRL.br = Math.max(46, Math.min(66, SW * 0.145));
+    CTRL.jy = CTRL.by = Math.min(CTRL.p1 - edge - CTRL.jr - 22, CTRL.p0 + ph * 0.6);
+    CTRL.jx = Math.max(INS.l + edge + CTRL.jr, SW * 0.25); CTRL.bx = Math.min(SW - INS.r - edge - CTRL.br, SW * 0.75);
+  } else {
+    CTRL.jr = Math.max(46, Math.min(70, SH * 0.13)); CTRL.br = Math.max(44, Math.min(66, SH * 0.125));
+    CTRL.jx = INS.l + edge + CTRL.jr + 12; CTRL.jy = SH - INS.b - edge - CTRL.jr - 8;
+    CTRL.bx = SW - INS.r - edge - CTRL.br - 12; CTRL.by = SH - INS.b - edge - CTRL.br - 14;
+    CTRL.p0 = CTRL.p1 = SH;
+  }
+  CTRL.dead = Math.max(12, CTRL.jr * 0.22);
+}
+window.addEventListener("resize", resize); window.addEventListener("orientationchange", () => setTimeout(resize, 120)); resize();
 const rnd = (a, b) => a + Math.random() * (b - a);
-const TOUCH = matchMedia("(pointer: coarse)").matches;
 if (!TOUCH) $("#ctl").textContent = "WASD to move. Click the game to lock the mouse, then look around and click to throw.";
+else $("#ctl").textContent = "Left thumb walks and turns. Hold your right thumb to throw, drag it to aim.";
+function buzz(ms) { try { if (TOUCH && navigator.vibrate) navigator.vibrate(ms); } catch {} }
 
 let G = null, raf = 0, lastTs = 0;
 const zbuf = new Float32Array(2048);
@@ -147,6 +182,7 @@ function loadFloor(n) {
   }
   G.phase = "play";
   G.banner = `FLOOR ${n} · ${G.floorName}`; G.bannerT = 2.4;
+  if (n === 1 && TOUCH && !COACH.done) G.coachT = 7;
   if (G.boss) { G.bossLine = G.boss.line; G.bossLineT = 3; sfx("horn"); const bk = G.boss.kind; setTimeout(() => voice(bk === 1 ? "champ" : "fired"), 2200); }
 }
 function los(ax, ay, bx, by) {
@@ -174,25 +210,69 @@ function spawnZombie(at) {
 const keys = {};
 addEventListener("keydown", (e) => { if (e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return; keys[e.key.toLowerCase()] = true; if (e.key === " " && G && !G.over) throwStick(); });
 addEventListener("keyup", (e) => { keys[e.key.toLowerCase()] = false; });
-let moveStick = null, lookDrag = null;
+const LOOK_RAD_PER_PX = 0.0058;
+const COACH = { stick: false, pad: false, done: localStorage.getItem("df:coached") === "1" };
+function inStickZone(x, y) { return PORTRAIT ? (y >= CTRL.p0 && x < SW / 2) : x < SW * 0.45; }
 canvas.addEventListener("pointerdown", (e) => {
   if (!G || G.over) return;
   if (e.pointerType === "mouse") { if (document.pointerLockElement !== canvas) { canvas.requestPointerLock?.(); return; } throwStick(); return; }
-  canvas.setPointerCapture(e.pointerId);
-  if (e.clientX < W * 0.45) moveStick = { id: e.pointerId, ox: e.clientX, oy: e.clientY, x: e.clientX, y: e.clientY };
-  else lookDrag = { id: e.pointerId, x: e.clientX, x0: e.clientX, y0: e.clientY, moved: 0, t0: performance.now() };
-});
+  e.preventDefault();
+  try { canvas.setPointerCapture(e.pointerId); } catch {}
+  if (inStickZone(e.clientX, e.clientY)) {
+    if (moveStick) return;
+    // the stick lands wherever the thumb lands (inside its zone), so a near miss still works
+    const r = CTRL.jr, ox = Math.max(INS.l + r * 0.6, Math.min(e.clientX, (PORTRAIT ? SW / 2 : SW * 0.45) - r * 0.4)), oy = PORTRAIT ? Math.max(CTRL.p0 + r * 0.6, Math.min(e.clientY, CTRL.p1 - r * 0.6)) : Math.max(SH * 0.25, Math.min(e.clientY, SH - INS.b - r * 0.6));
+    moveStick = { id: e.pointerId, ox, oy, x: e.clientX, y: e.clientY };
+    COACH.stick = true;
+  } else if (!lookDrag) {
+    lookDrag = { id: e.pointerId, x: e.clientX, cx: e.clientX, cy: e.clientY };
+    COACH.pad = true;
+    // first touch throws straight away (it should feel instant), except: never spend a charcoal
+    // bomb on thin air, and never open with a colleague square in the crosshair
+    if (G.phase === "play" && (G.fireCD || 0) <= 0.12) {
+      const line = inLine();
+      const wasteBomb = G.bombs > 0 && !G.zombies.some((z) => z.state === "zombie" && inCone(z, 0.6));
+      if (!wasteBomb && !line.friend) { throwStick(); G.fireCD = fireRate(); }
+    }
+  }
+}, { passive: false });
 canvas.addEventListener("pointermove", (e) => {
   if (!G) return;
   if (e.pointerType === "mouse") { if (document.pointerLockElement === canvas) rotate(e.movementX * 0.0022); return; }
   if (moveStick && e.pointerId === moveStick.id) { moveStick.x = e.clientX; moveStick.y = e.clientY; }
-  if (lookDrag && e.pointerId === lookDrag.id) { const dx = e.clientX - lookDrag.x; lookDrag.moved += Math.abs(dx) + Math.abs(e.clientY - lookDrag.y0) * 0.2; rotate(dx * (2.4 / W)); lookDrag.x = e.clientX; }
+  if (lookDrag && e.pointerId === lookDrag.id) { const dx = e.clientX - lookDrag.x; rotate(dx * LOOK_RAD_PER_PX); lookDrag.x = e.clientX; lookDrag.cx = e.clientX; lookDrag.cy = e.clientY; lookDrag.dragT = 0.12; }
 });
 const up = (e) => {
   if (moveStick && e.pointerId === moveStick.id) moveStick = null;
-  if (lookDrag && e.pointerId === lookDrag.id) { if (lookDrag.moved < 12 && performance.now() - lookDrag.t0 < 350 && G && !G.over) throwStick(); lookDrag = null; }
+  if (lookDrag && e.pointerId === lookDrag.id) lookDrag = null;
 };
 canvas.addEventListener("pointerup", up); canvas.addEventListener("pointercancel", up);
+canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+for (const ev of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(ev, (e) => { if (G && !G.over) e.preventDefault(); }, { passive: false });
+for (const ev of ["touchstart", "touchmove"]) canvas.addEventListener(ev, (e) => { if (G && !G.over) e.preventDefault(); }, { passive: false });
+function fireRate() { return G.power === "sage" ? 0.26 : 0.34; }
+// the zombie the right thumb is "pointing at": inside the cone, in sight, within 8 units, and of
+// those the one closest to the crosshair (distance only breaks near-ties)
+function aimTarget(cone) {
+  let best = null, bs = Infinity;
+  for (const z of G.zombies) {
+    if (z.state !== "zombie") continue;
+    const c = camSpace(z.x, z.y); if (c.ty < 0.2 || c.ty > 8) continue;
+    const a = c.tx / c.ty; if (Math.abs(a) > cone + (0.5 / c.ty) * 0.45) continue;
+    if (!los(G.px, G.py, z.x, z.y)) continue;
+    const score = Math.abs(Math.atan(a * 0.78)) + c.ty * 0.01;
+    if (score < bs) { bs = score; best = { z, a }; }
+  }
+  return best;
+}
+// mirrors throwStick's choice: would a throw right now land on a zombie, or on a colleague in the way?
+function inLine() {
+  const cone = TOUCH ? 0.3 : 0.16;
+  let zd = 99, zombie = false;
+  for (const z of G.zombies) if (z.state === "zombie" && inCone(z, cone)) { zombie = true; zd = Math.min(zd, Math.hypot(z.x - G.px, z.y - G.py)); }
+  const friend = G.friends.some((f) => inCone(f, 0.07) && (!zombie || Math.hypot(f.x - G.px, f.y - G.py) < zd - 0.8));
+  return { zombie, friend };
+}
 
 function camSpace(x, y) {
   const dx = x - G.px, dy = y - G.py;
@@ -204,7 +284,7 @@ function throwStick() {
   if (!G || G.phase !== "play") return;
   G.hand = 1;
   const bomb = G.bombs > 0;
-  const cone = bomb ? 0.6 : 0.16;
+  const cone = bomb ? 0.6 : (TOUCH ? 0.3 : 0.16);
   const zs = G.zombies.filter((z) => z.state === "zombie" && inCone(z, cone)).map((z) => ({ e: z, d: Math.hypot(z.x - G.px, z.y - G.py), kind: "z" }));
   const fs = G.friends.filter((f) => inCone(f, 0.07)).map((f) => ({ e: f, d: Math.hypot(f.x - G.px, f.y - G.py), kind: "f" }));
   const all = [...zs, ...fs.filter((f) => !zs.length || f.d < zs.reduce((m, o) => Math.min(m, o.d), 99) - 0.8)].sort((a, b) => a.d - b.d);
@@ -235,14 +315,14 @@ function floater(text, bad, y) {
 }
 function dirWord(o) { const c = camSpace(o.x, o.y); if (c.ty < 0) return "BEHIND YOU"; const a = c.tx / Math.max(0.01, c.ty); return a < -0.4 ? "LEFT" : a > 0.4 ? "RIGHT" : "AHEAD"; }
 function hitFriend(f) {
-  G.score = Math.max(0, G.score - 50); voice(f.type === 0 ? "alreadyfresh_f" : "alreadyfresh"); sfx("thud"); f.state = "annoyed"; f.st = 0;
+  G.score = Math.max(0, G.score - 50); voice(f.type === 0 ? "alreadyfresh_f" : "alreadyfresh"); sfx("thud"); f.state = "annoyed"; f.st = 0; buzz(40);
   floater(`${f.name}: I'M ALREADY FRESH, MATE.  −50`, true);
 }
 function convert(z, dmg) {
   if (z.state !== "zombie") return;
   z.hp -= dmg; z.flash = 0.12; G.hitstop = Math.max(G.hitstop || 0, z.hp > 0 ? 0.035 : (z.boss ? 0.18 : 0.07)); sfx(z.hp > 0 ? "hit" : "pop");
   if (z.hp > 0) { floater(z.boss ? ["NOT YET.", "STILL REEKS.", "KEEP GOING."][Math.floor(rnd(0, 3))] : "HIT"); z.stun = z.boss ? 0.15 : 0.25; if (z.boss && z.hp === Math.floor(z.maxHp / 2)) { G.bossLine = z.kind === 3 ? "YOU'RE FIRED." : z.kind === 2 ? "I'LL HAVE TO ESCALATE THIS." : "LET'S CIRCLE BACK."; G.bossLineT = 2.5; } return; }
-  z.state = "fresh"; z.st = 0; z.h = 0.85; z.wmul = 0.85;
+  z.state = "fresh"; z.st = 0; z.h = 0.85; z.wmul = 0.85; buzz(z.boss ? 60 : 14);
   G.kills++; voice(z.boss ? (z.kind === 3 ? "pub" : "legend") : ["cheers", "better", "legend"][Math.floor(rnd(0, 3))]);
   const pts = (z.boss ? 1500 * z.kind : 100) * (1 + Math.floor((G.floor - 1) / 5) * 0.5);
   G.score += pts;
@@ -311,7 +391,24 @@ function update(dt) {
   if (keys["w"] || keys["arrowup"]) f += 1; if (keys["s"] || keys["arrowdown"]) f -= 1;
   if (keys["a"]) s -= 1; if (keys["d"]) s += 1;
   if (keys["arrowleft"] || keys["q"]) rotate(-2.2 * dt); if (keys["arrowright"] || keys["e"]) rotate(2.2 * dt);
-  if (moveStick) { const dx = moveStick.x - moveStick.ox, dy = moveStick.y - moveStick.oy, d = Math.hypot(dx, dy), max = U * 0.12; if (d > 6) { const k = Math.min(1, d / max); s += dx / d * k; f -= dy / d * k; } }
+  if (moveStick) {
+    // forward/back on the vertical axis, turning on the horizontal one; separate dead zones so
+    // pushing straight up walks straight
+    const R = CTRL.jr, dz = CTRL.dead, dx = moveStick.x - moveStick.ox, dy = moveStick.y - moveStick.oy;
+    const ax = Math.abs(dx) > dz ? Math.max(-1, Math.min(1, (dx - Math.sign(dx) * dz) / (R - dz))) : 0;
+    const ay = Math.abs(dy) > dz ? Math.max(-1, Math.min(1, (dy - Math.sign(dy) * dz) / (R - dz))) : 0;
+    f -= ay; if (ax) { rotate(Math.sign(ax) * Math.pow(Math.abs(ax), 1.5) * 2.6 * dt); G.stickTurnT = 0.35; }
+  }
+  G.stickTurnT = Math.max(0, (G.stickTurnT || 0) - dt);
+  G.fireCD = Math.max(0, (G.fireCD || 0) - dt);
+  if (lookDrag && G.phase === "play") {
+    lookDrag.dragT = Math.max(0, (lookDrag.dragT || 0) - dt);
+    // gentle pull toward the zombie nearest the crosshair, held off while the thumb is actively dragging
+    const near = aimTarget(0.42);
+    if (near && lookDrag.dragT <= 0 && G.stickTurnT <= 0) { const ang = Math.atan(near.a * 0.78); if (Math.abs(ang) > 0.02) rotate(Math.sign(ang) * Math.min(Math.abs(ang), 0.6 * dt)); }
+    if (G.fireCD <= 0 && aimTarget(0.3)) { const line = inLine(); if (line.zombie && !line.friend) { throwStick(); G.fireCD = fireRate(); } }
+  }
+  if (G.coachT > 0) { G.coachT -= dt; if (COACH.stick && COACH.pad && G.coachT > 1) G.coachT = 1; if (G.coachT <= 0 && COACH.stick && COACH.pad) { COACH.done = true; localStorage.setItem("df:coached", "1"); } }
   const l = Math.hypot(f, s); if (l > 1) { f /= l; s /= l; }
   G.moving = l > 0.05;
   const sp = 3.1 * dt;
@@ -389,7 +486,7 @@ function update(dt) {
   for (let i = G.floaters.length - 1; i >= 0; i--) { const fl = G.floaters[i]; fl.t += dt; fl.y -= dt * 34; if (fl.t > 1) G.floaters.splice(i, 1); }
 }
 function hitPlayer(z, why) {
-  G.lives -= 1; sfx("thud"); G.inv = 1.8; G.shake = 0.4; G.flash = 0.5;
+  G.lives -= 1; sfx("thud"); G.inv = 1.8; G.shake = 0.4; G.flash = 0.5; buzz([40, 40, 80]);
   if (z) { z.stun = z.boss ? 0.8 : 1.6; const kx = z.x - G.px, ky = z.y - G.py, kd = Math.hypot(kx, ky) || 1; for (let i = 0; i < (z.boss ? 3 : 6); i++) tryMove(z, kx / kd * 0.3, ky / kd * 0.3, z.rad * 0.8); }
   floater(why || "STAINED TEE", true, H * 0.62);
   if (G.lives <= 0) { G.over = true; cancelAnimationFrame(raf); document.exitPointerLock?.(); if (AU.drone) AU.drone.gain.setTargetAtTime(0, AU.ctx.currentTime, 0.2); if (AU.music) AU.musicGain.gain.setTargetAtTime(AU.musicVol * 0.5, AU.ctx.currentTime, 0.6); draw(); setTimeout(showEnd, 900); }
@@ -429,6 +526,20 @@ function castFloor(hor) {
   return true;
 }
 function draw() {
+  ctx.setTransform(DPR, 0, 0, DPR, VX * DPR, VY * DPR);
+  ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();
+  drawWorld();
+  ctx.restore();
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  if (TOUCH) drawControls();
+}
+// font size scaled to the viewport but never below a readable minimum
+const fz = (k, min) => Math.max(min, Math.round(U * k));
+// shrink a font until the text fits maxW
+function fitFont(weight, size, text, maxW) { ctx.font = `${weight} ${size}px system-ui`; const w = ctx.measureText(text).width; if (w > maxW) { size = Math.max(9, Math.floor(size * maxW / w)); ctx.font = `${weight} ${size}px system-ui`; } return size; }
+function drawWorld() {
+  ctx.lineJoin = "round"; ctx.miterLimit = 2;
+  const HL = (PORTRAIT ? 0 : INS.l) + U * 0.05, HR = W - (PORTRAIT ? 0 : INS.r) - U * 0.05;
   const bobY = Math.sin(G.bob) * H * 0.012 + (G.shake > 0 ? rnd(-1, 1) * U * 0.012 : 0);
   const hor = H / 2 + bobY;
   if (!castFloor(hor)) {
@@ -513,48 +624,44 @@ function draw() {
   }
   // (sticks are drawn as world sprites above)
   for (const p of G.parts) { ctx.globalAlpha = Math.min(1, p.t * 3); ctx.fillStyle = p.c; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.fill(); } ctx.globalAlpha = 1;
-  for (const f of G.floaters) { ctx.globalAlpha = 1 - f.t; ctx.fillStyle = f.bad ? "#ff6b6b" : "#d6f26b"; ctx.strokeStyle = "rgba(16,59,45,0.8)"; ctx.lineWidth = 4; ctx.font = `900 ${U * 0.036}px system-ui`; ctx.textAlign = "center"; ctx.textBaseline = "bottom"; ctx.strokeText(f.text, f.x, f.y); ctx.fillText(f.text, f.x, f.y); ctx.globalAlpha = 1; }
+  for (const f of G.floaters) { ctx.globalAlpha = 1 - f.t; ctx.fillStyle = f.bad ? "#ff6b6b" : "#d6f26b"; ctx.strokeStyle = "rgba(16,59,45,0.8)"; ctx.lineWidth = 4; fitFont(900, fz(0.036, 12), f.text, W * 0.94); ctx.textAlign = "center"; ctx.textBaseline = "bottom"; ctx.strokeText(f.text, f.x, f.y); ctx.fillText(f.text, f.x, f.y); ctx.globalAlpha = 1; }
   if (G.tint) { ctx.fillStyle = G.tint; ctx.fillRect(0, 0, W, H); }
   { let nd = 99; for (const z of G.zombies) if (z.state === "zombie") nd = Math.min(nd, Math.hypot(z.x - G.px, z.y - G.py)); const k = Math.max(0, Math.min(1, (7 - nd) / 7)); if (k > 0) { const vg = ctx.createRadialGradient(W / 2, H / 2, U * 0.22, W / 2, H / 2, Math.max(W, H) * 0.68); vg.addColorStop(0, "rgba(120,140,20,0)"); vg.addColorStop(1, `rgba(110,135,15,${0.7 * k})`); ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H); } }
   // hand
-  const hs = U * 0.62, hb = Math.sin(G.bob * 0.5) * (G.moving ? U * 0.015 : 0);
-  const hand = IMG.hand; if (hand.complete && hand.naturalWidth) ctx.drawImage(hand, W - hs * 0.78 + G.hand * hs * 0.15 + hb, H - hs * 0.82 + G.hand * hs * 0.25 + Math.abs(hb), hs, hs);
+  const hs = U * (TOUCH ? (PORTRAIT ? 0.5 : 0.48) : 0.62), hb = Math.sin(G.bob * 0.5) * (G.moving ? U * 0.015 : 0);
+  const hx = TOUCH && !PORTRAIT ? Math.min(W - hs * 0.78, CTRL.bx - CTRL.br - 10 - hs * 0.96) : W - hs * 0.78;
+  const hand = IMG.hand; if (hand.complete && hand.naturalWidth) ctx.drawImage(hand, hx + G.hand * hs * 0.15 + hb, H - hs * 0.82 + G.hand * hs * 0.25 + Math.abs(hb), hs, hs);
   ctx.fillStyle = "#d6f26b"; ctx.strokeStyle = "rgba(16,59,45,0.7)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(W / 2, H / 2, 5, 0, 7); ctx.fill(); ctx.stroke();
   if (G.slow > 0) { ctx.fillStyle = "rgba(60,157,90,0.14)"; ctx.fillRect(0, 0, W, H); }
   if (G.flash > 0) { ctx.fillStyle = `rgba(230,60,60,${G.flash * 0.5})`; ctx.fillRect(0, 0, W, H); }
   if (G.inv > 0 && Math.floor(G.inv * 10) % 2 === 0) { ctx.strokeStyle = "rgba(255,80,80,0.6)"; ctx.lineWidth = 8; ctx.strokeRect(4, 4, W - 8, H - 8); }
-  if (moveStick) { ctx.strokeStyle = "rgba(244,236,217,0.5)"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(moveStick.ox, moveStick.oy, U * 0.12, 0, 7); ctx.stroke(); const dx = moveStick.x - moveStick.ox, dy = moveStick.y - moveStick.oy, d = Math.hypot(dx, dy), k = Math.min(1, d / (U * 0.12)); ctx.fillStyle = "rgba(244,236,217,0.6)"; ctx.beginPath(); ctx.arc(moveStick.ox + (d ? dx / d * k * U * 0.12 : 0), moveStick.oy + (d ? dy / d * k * U * 0.12 : 0), U * 0.05, 0, 7); ctx.fill(); }
   // minimap
-  const cell = Math.max(3, Math.floor(U * 0.011)), mmx = W - cell * MW - U * 0.04, mmy = U * 0.17;
-  ctx.fillStyle = "rgba(16,59,45,0.55)"; ctx.fillRect(mmx - 3, mmy - 3, cell * MW + 6, cell * MH + 6);
-  for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) { const c = MAP[y][x]; if (WALL[c]) { ctx.fillStyle = "rgba(244,236,217,0.5)"; ctx.fillRect(mmx + x * cell, mmy + y * cell, cell, cell); } else if (c === "D") { ctx.fillStyle = "rgba(214,242,107,0.6)"; ctx.fillRect(mmx + x * cell, mmy + y * cell, cell, cell); } }
-  for (const z of G.zombies) if (z.state === "zombie") { ctx.fillStyle = z.boss ? "#ffd166" : "#ff6b6b"; ctx.fillRect(mmx + z.x * cell - 1.5, mmy + z.y * cell - 1.5, z.boss ? 5 : 3, z.boss ? 5 : 3); }
-  for (const fr of G.friends) { ctx.fillStyle = fr.threat > 0 ? "#ffd166" : "#7fd3ff"; ctx.fillRect(mmx + fr.x * cell - 2, mmy + fr.y * cell - 2, 4, 4); }
-  for (const p of G.pickups) { ctx.fillStyle = "#d6f26b"; ctx.fillRect(mmx + p.x * cell - 1.5, mmy + p.y * cell - 1.5, 3, 3); }
-  ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(mmx + G.px * cell, mmy + G.py * cell, 2.5, 0, 7); ctx.fill();
-  ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(mmx + G.px * cell, mmy + G.py * cell); ctx.lineTo(mmx + (G.px + G.dirX * 2) * cell, mmy + (G.py + G.dirY * 2) * cell); ctx.stroke();
+  if (!PORTRAIT) drawMinimap(W - INS.r - Math.max(3, Math.floor(U * 0.011)) * MW - U * 0.04, U * 0.17, Math.max(3, Math.floor(U * 0.011)));
+
   // HUD
   const ink = "#f4ecd9";
   ctx.fillStyle = ink; ctx.strokeStyle = "rgba(16,59,45,0.8)"; ctx.lineWidth = 4; ctx.textBaseline = "top"; ctx.textAlign = "left";
-  ctx.font = `900 ${U * 0.03}px system-ui`; ctx.strokeText("FLOOR", U * 0.05, U * 0.04); ctx.fillText("FLOOR", U * 0.05, U * 0.04);
-  ctx.font = `900 ${U * 0.12}px system-ui`; ctx.strokeText(String(Math.max(1, G.floor)), U * 0.05, U * 0.065); ctx.fillText(String(Math.max(1, G.floor)), U * 0.05, U * 0.065);
-  if (!(G.boss && G.boss.state === "zombie")) { ctx.font = `800 ${U * 0.024}px system-ui`; ctx.strokeText(G.floorName, U * 0.05, U * 0.19); ctx.fillText(G.floorName, U * 0.05, U * 0.19); }
-  ctx.textAlign = "right"; ctx.font = `900 ${U * 0.055}px system-ui`; const sc = Math.round(G.score).toLocaleString(); ctx.strokeText(sc, W - U * 0.05, U * 0.04); ctx.fillText(sc, W - U * 0.05, U * 0.04);
+  ctx.font = `900 ${fz(0.03, 11)}px system-ui`; ctx.strokeText("FLOOR", HL, U * 0.04); ctx.fillText("FLOOR", HL, U * 0.04);
+  ctx.font = `900 ${U * 0.12}px system-ui`; ctx.strokeText(String(Math.max(1, G.floor)), HL, U * 0.065); ctx.fillText(String(Math.max(1, G.floor)), HL, U * 0.065);
+  if (!(G.boss && G.boss.state === "zombie")) { ctx.font = `800 ${fz(0.024, 11)}px system-ui`; ctx.strokeText(G.floorName, HL, U * 0.19); ctx.fillText(G.floorName, HL, U * 0.19); }
+  ctx.textAlign = "right"; ctx.font = `900 ${U * 0.055}px system-ui`; const sc = Math.round(G.score).toLocaleString(); ctx.strokeText(sc, HR, U * 0.04); ctx.fillText(sc, HR, U * 0.04);
   const left = G.zombies.filter((z) => z.state === "zombie").length + G.toSpawn;
-  ctx.font = `800 ${U * 0.026}px system-ui`; ctx.strokeText(`${left} STILL STINK`, W - U * 0.05, U * 0.105); ctx.fillText(`${left} STILL STINK`, W - U * 0.05, U * 0.105);
-  for (let i = 0; i < G.lives; i++) { const t = IMG.tee; if (t.complete && t.naturalWidth) ctx.drawImage(t, U * 0.05 + i * U * 0.062, U * 0.23, U * 0.06, U * 0.06); }
-  ctx.textAlign = "left"; ctx.textBaseline = "bottom"; ctx.font = `900 ${U * 0.03}px system-ui`;
+  ctx.font = `800 ${fz(0.026, 11)}px system-ui`; ctx.strokeText(`${left} STILL STINK`, HR, U * 0.105); ctx.fillText(`${left} STILL STINK`, HR, U * 0.105);
+  if (!PORTRAIT) for (let i = 0; i < G.lives; i++) { const t = IMG.tee; if (t.complete && t.naturalWidth) ctx.drawImage(t, HL + i * U * 0.062, U * 0.23, U * 0.06, U * 0.06); }
+  ctx.textAlign = "left"; ctx.textBaseline = "bottom"; ctx.font = `900 ${fz(0.03, 11)}px system-ui`;
   const wn = G.bombs > 0 ? `CHARCOAL BOMB ×${G.bombs}` : G.power === "sage" ? `SAGE · ${Math.ceil(G.powerT)}s` : "ROLL-ON";
-  ctx.strokeText(wn, U * 0.05, H - U * 0.05); ctx.fillText(wn, U * 0.05, H - U * 0.05);
+  if (TOUCH && !PORTRAIT) { ctx.textAlign = "center"; ctx.strokeText(wn, W / 2, H - U * 0.04); ctx.fillText(wn, W / 2, H - U * 0.04); }
+  else if (!PORTRAIT) { ctx.strokeText(wn, HL, H - U * 0.05); ctx.fillText(wn, HL, H - U * 0.05); }
   if (G.boss && G.boss.state === "zombie") {
-    const mmLeft = W - Math.max(3, Math.floor(U * 0.011)) * MW - U * 0.04 - 10; const bw = Math.max(U * 0.3, Math.min(U * 0.6, 2 * (mmLeft - W / 2))), bx = W / 2 - bw / 2, by = U * 0.15;
-    ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.font = `900 ${U * 0.026}px system-ui`; ctx.strokeText(G.boss.name, W / 2, by + U * 0.04); ctx.fillText(G.boss.name, W / 2, by + U * 0.04);
+    const mmLeft = PORTRAIT ? W - U * 0.06 : W - INS.r - Math.max(3, Math.floor(U * 0.011)) * MW - U * 0.04 - 10; const bw = Math.max(U * 0.3, Math.min(U * 0.6, 2 * (mmLeft - W / 2))), bx = W / 2 - bw / 2, by = PORTRAIT ? U * 0.21 : U * 0.15;
+    ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.font = `900 ${fz(0.026, 12)}px system-ui`; ctx.strokeText(G.boss.name, W / 2, by + U * 0.04); ctx.fillText(G.boss.name, W / 2, by + U * 0.04);
     ctx.fillStyle = "rgba(0,0,0,0.45)"; ctx.fillRect(bx - 2, by - 2, bw + 4, U * 0.022 + 4);
     ctx.fillStyle = "#ff6b6b"; ctx.fillRect(bx, by, bw * Math.max(0, G.boss.hp / G.boss.maxHp), U * 0.022);
     ctx.fillStyle = ink;
   }
-  if (G.bossLineT > 0) { ctx.globalAlpha = Math.min(1, G.bossLineT); ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.font = `900 ${U * 0.04}px system-ui`; ctx.fillStyle = "#ffd166"; ctx.strokeText(G.bossLine, W / 2, H * 0.22); ctx.fillText(G.bossLine, W / 2, H * 0.22); ctx.globalAlpha = 1; ctx.fillStyle = ink; }
-  if (G.bannerT > 0) { const k = Math.min(1, G.bannerT / 0.3); ctx.globalAlpha = k; ctx.fillStyle = "rgba(16,59,45,0.85)"; ctx.fillRect(0, H * 0.3, W, H * 0.12); ctx.fillStyle = "#d6f26b"; ctx.font = `900 ${U * 0.06}px system-ui`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(G.banner, W / 2, H * 0.36); ctx.globalAlpha = 1; }
+  const bly = PORTRAIT && G.boss && G.boss.state === "zombie" ? U * 0.25 + fz(0.026, 12) + 10 : H * 0.22;
+  if (G.bossLineT > 0) { ctx.globalAlpha = Math.min(1, G.bossLineT); ctx.textAlign = "center"; ctx.textBaseline = "top"; fitFont(900, Math.round(U * 0.04), G.bossLine, W * 0.92); ctx.fillStyle = "#ffd166"; ctx.strokeText(G.bossLine, W / 2, bly); ctx.fillText(G.bossLine, W / 2, bly); ctx.globalAlpha = 1; ctx.fillStyle = ink; }
+  if (G.bannerT > 0) { const k = Math.min(1, G.bannerT / 0.3); ctx.globalAlpha = k; const bnY = PORTRAIT && G.bossLineT > 0 ? Math.max(H * 0.3, bly + U * 0.04 + 10) : H * 0.3; ctx.fillStyle = "rgba(16,59,45,0.85)"; ctx.fillRect(0, bnY, W, H * 0.12); ctx.fillStyle = "#d6f26b"; fitFont(900, Math.round(U * 0.06), G.banner, W * 0.9); ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(G.banner, W / 2, bnY + H * 0.06); ctx.globalAlpha = 1; }
   // lift doors
   if (G.phase === "lift") {
     const t = G.liftT, k = t < 0.75 ? Math.min(1, t / 0.6) : Math.max(0, 1 - (t - 0.95) / 0.6);
@@ -564,6 +671,69 @@ function draw() {
       ctx.drawImage(lift, lift.naturalWidth / 2, 0, lift.naturalWidth / 2, lift.naturalHeight, W - lw, 0, W / 2, H);
     } else { ctx.fillStyle = "#8a9a8f"; ctx.fillRect(0, 0, lw, H); ctx.fillRect(W - lw, 0, lw, H); }
     if (k > 0.95) { ctx.fillStyle = "#d6f26b"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.font = `900 ${U * 0.16}px system-ui`; ctx.strokeText(String(G.floor + (G.liftLoaded ? 0 : 1)), W / 2, H * 0.42); ctx.fillText(String(G.floor + (G.liftLoaded ? 0 : 1)), W / 2, H * 0.42); ctx.font = `900 ${U * 0.035}px system-ui`; ctx.fillStyle = "#f4ecd9"; ctx.fillText(G.liftLoaded ? G.floorName : "GOING UP", W / 2, H * 0.53); }
+  }
+}
+function drawMinimap(mmx, mmy, cell) {
+  ctx.fillStyle = "rgba(16,59,45,0.55)"; ctx.fillRect(mmx - 3, mmy - 3, cell * MW + 6, cell * MH + 6);
+  for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) { const c = MAP[y][x]; if (WALL[c]) { ctx.fillStyle = "rgba(244,236,217,0.5)"; ctx.fillRect(mmx + x * cell, mmy + y * cell, cell, cell); } else if (c === "D") { ctx.fillStyle = "rgba(214,242,107,0.6)"; ctx.fillRect(mmx + x * cell, mmy + y * cell, cell, cell); } }
+  const dot = Math.max(3, cell * 0.8);
+  for (const z of G.zombies) if (z.state === "zombie") { ctx.fillStyle = z.boss ? "#ffd166" : "#ff6b6b"; const r = z.boss ? dot * 1.6 : dot; ctx.fillRect(mmx + z.x * cell - r / 2, mmy + z.y * cell - r / 2, r, r); }
+  for (const fr of G.friends) { ctx.fillStyle = fr.threat > 0 ? "#ffd166" : "#7fd3ff"; ctx.fillRect(mmx + fr.x * cell - dot * 0.6, mmy + fr.y * cell - dot * 0.6, dot * 1.2, dot * 1.2); }
+  for (const p of G.pickups) { ctx.fillStyle = "#d6f26b"; ctx.fillRect(mmx + p.x * cell - dot / 2, mmy + p.y * cell - dot / 2, dot, dot); }
+  ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(mmx + G.px * cell, mmy + G.py * cell, Math.max(2.5, cell * 0.7), 0, 7); ctx.fill();
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(mmx + G.px * cell, mmy + G.py * cell); ctx.lineTo(mmx + (G.px + G.dirX * 2) * cell, mmy + (G.py + G.dirY * 2) * cell); ctx.stroke();
+}
+function pill(text, x, y, size, alpha, fill, ink) {
+  ctx.save(); ctx.globalAlpha = alpha; ctx.font = `900 ${size}px system-ui`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  const w = ctx.measureText(text).width + size * 1.6, h = size * 2.1;
+  ctx.fillStyle = fill; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x - w / 2, y - h / 2, w, h, h / 2) : ctx.rect(x - w / 2, y - h / 2, w, h); ctx.fill();
+  ctx.fillStyle = ink; ctx.fillText(text, x, y + 1); ctx.restore();
+}
+function drawControls() {
+  ctx.lineJoin = "round";
+  const lime = "#d6f26b", cream = "rgba(244,236,217,", green = "#103b2d";
+  if (PORTRAIT) {
+    // the handheld: a panel under the screen with the stick, the throw button and the map
+    ctx.fillStyle = green; ctx.fillRect(0, 0, SW, VY); ctx.fillRect(0, CTRL.p0, SW, SH - CTRL.p0);
+    ctx.fillStyle = "rgba(0,0,0,0.28)"; ctx.fillRect(0, CTRL.p0, SW, 3);
+    const cell = Math.max(3, Math.floor(Math.min(SW * 0.33, (CTRL.jy - CTRL.jr - CTRL.p0) - 44) / MW));
+    const mw = cell * MW, mmx = SW / 2 - mw / 2, mmy = CTRL.p0 + 16;
+    if (mmy + mw < CTRL.jy - CTRL.jr - 8 || cell >= 3) drawMinimap(mmx, mmy, cell);
+    // tees + weapon down the sides of the map
+    ctx.textBaseline = "middle"; ctx.font = `900 ${Math.round(SW * 0.033)}px system-ui`; ctx.fillStyle = cream + "0.55)"; ctx.textAlign = "left";
+    ctx.fillText("TEES", INS.l + 22, mmy + 10);
+    for (let i = 0; i < G.lives; i++) { const t = IMG.tee; if (t.complete && t.naturalWidth) ctx.drawImage(t, INS.l + 20 + i * SW * 0.058, mmy + 22, SW * 0.055, SW * 0.055); }
+    ctx.textAlign = "right"; ctx.fillText("HOLDING", SW - INS.r - 22, mmy + 10);
+    const wn = G.bombs > 0 ? `CHARCOAL ×${G.bombs}` : G.power === "sage" ? `SAGE ${Math.ceil(G.powerT)}s` : "ROLL-ON";
+    ctx.fillStyle = lime; fitFont(900, Math.round(SW * 0.04), wn, (SW - INS.r - 22) - (mmx + mw + 10)); ctx.fillText(wn, SW - INS.r - 22, mmy + 36);
+  }
+  const live = G.phase !== "lift";
+  // stick: a ghost at home, or the live stick where the thumb is
+  const sx = moveStick ? moveStick.ox : CTRL.jx, sy = moveStick ? moveStick.oy : CTRL.jy, R = CTRL.jr;
+  ctx.lineWidth = 3; ctx.strokeStyle = cream + (moveStick ? "0.75)" : "0.4)"); ctx.fillStyle = cream + (moveStick ? "0.12)" : "0.06)");
+  ctx.beginPath(); ctx.arc(sx, sy, R, 0, 7); ctx.fill(); ctx.stroke();
+  let kx = 0, ky = 0; if (moveStick) { const dx = moveStick.x - moveStick.ox, dy = moveStick.y - moveStick.oy, d = Math.hypot(dx, dy), k = Math.min(1, d / R); if (d) { kx = dx / d * k * R; ky = dy / d * k * R; } }
+  ctx.fillStyle = cream + (moveStick ? "0.85)" : "0.45)"); ctx.beginPath(); ctx.arc(sx + kx, sy + ky, R * 0.42, 0, 7); ctx.fill();
+  ctx.fillStyle = green; ctx.globalAlpha = moveStick ? 0.6 : 0.4; ctx.beginPath();
+  for (const [ax, ay] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) { const cx = sx + ax * R * 0.72, cy = sy + ay * R * 0.72, s = R * 0.1; ctx.moveTo(cx + ax * s, cy + ay * s); ctx.lineTo(cx - ay * s - ax * s * 0.6, cy + ax * s - ay * s * 0.6); ctx.lineTo(cx + ay * s - ax * s * 0.6, cy - ax * s - ay * s * 0.6); }
+  ctx.fill(); ctx.globalAlpha = 1;
+  // throw button
+  const on = !!lookDrag, B = CTRL.br, pulse = on ? 1 + Math.sin(G.t * 18) * 0.03 : 1;
+  ctx.fillStyle = on ? lime : "rgba(214,242,107,0.22)"; ctx.strokeStyle = on ? lime : "rgba(214,242,107,0.7)"; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(CTRL.bx, CTRL.by, B * pulse, 0, 7); ctx.fill(); ctx.stroke();
+  const st = IMG.stick; if (st.complete && st.naturalWidth) { ctx.save(); ctx.translate(CTRL.bx, CTRL.by); ctx.rotate(-0.5); ctx.globalAlpha = on ? 1 : 0.85; ctx.drawImage(st, -B * 0.62, -B * 0.62, B * 1.24, B * 1.24); ctx.restore(); }
+  if (G.fireCD > 0 && on) { ctx.strokeStyle = green; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(CTRL.bx, CTRL.by, B * 0.86, -Math.PI / 2, -Math.PI / 2 + 6.283 * (1 - G.fireCD / fireRate())); ctx.stroke(); }
+  if (on && lookDrag && Math.hypot(lookDrag.cx - CTRL.bx, lookDrag.cy - CTRL.by) > B * 1.2) { ctx.strokeStyle = "rgba(214,242,107,0.6)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(lookDrag.cx, lookDrag.cy, 26, 0, 7); ctx.stroke(); }
+  // labels (always on in the handheld layout; coach marks on the first run otherwise)
+  const lab = Math.round(Math.max(11, Math.min(14, SW * 0.032)));
+  if (PORTRAIT) {
+    ctx.font = `900 ${lab}px system-ui`; ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillStyle = cream + "0.6)";
+    ctx.fillText("WALK + TURN", CTRL.jx, CTRL.jy + R + 10); ctx.fillText("HOLD TO THROW", CTRL.bx, CTRL.by + B + 10);
+  }
+  if (G.coachT > 0 && live) {
+    const a = Math.min(1, G.coachT) * (0.75 + 0.25 * Math.sin(G.t * 6));
+    if (!COACH.stick || G.coachT > 1) pill(PORTRAIT ? "DRAG HERE" : "DRAG TO WALK + TURN", CTRL.jx + (PORTRAIT ? 0 : R * 0.6), CTRL.jy - R - lab * 2, lab + 1, a * (COACH.stick ? 0.35 : 1), lime, green);
+    if (!COACH.pad || G.coachT > 1) pill(PORTRAIT ? "HOLD HERE" : "HOLD TO THROW · DRAG TO AIM", CTRL.bx - (PORTRAIT ? 0 : B * 1.6), CTRL.by - B - lab * 2, lab + 1, a * (COACH.pad ? 0.35 : 1), lime, green);
   }
 }
 function frame(ts) {
@@ -721,7 +891,7 @@ function start() {
   audioInit(); if (AU.music) { const g = AU.musicGain.gain; g.cancelScheduledValues(AU.ctx.currentTime); g.setTargetAtTime(AU.musicVol, AU.ctx.currentTime, 0.6); } else playMusic(AU.track);
   $("#start").classList.add("hidden"); $("#end").classList.add("hidden");
   G = newGame(); loadMap("A"); G.px = START.x; G.py = START.y; G.phase = "lift"; G.liftT = 0.5; G.liftLoaded = false; G.floor = 0; G.floorName = "";
-  lastTs = performance.now(); moveStick = null; lookDrag = null;
+  lastTs = performance.now(); moveStick = null; lookDrag = null; resize();
   raf = requestAnimationFrame(frame);
 }
 $("#go").addEventListener("click", start);
