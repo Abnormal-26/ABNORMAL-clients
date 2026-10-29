@@ -1,12 +1,13 @@
 /**
- * DEAD FRESH — scoreboard. Google Apps Script bound to the "Dead Fresh Scoreboard" sheet.
- * Deploy as a Web app (Execute as: me, Who has access: Anyone) and paste the /exec URL
- * into <meta name="df-board"> in index.html.
+ * ABNORMAL game scoreboards — one Google Apps Script, many games.
+ * Bound to the "Dead Fresh Scoreboard" sheet (ollie@abnormal.au). Deployed as a Web app
+ * (Execute as: me, Who has access: Anyone). Every game posts to the same /exec URL with a
+ * `game` id; rows carry it in column I, and each game only ever sees its own board.
  *
- * Sheet "Scores": When | Player | Name | Score | Floor | Freshened | Status | Flag
- * Status is the approval switch — live / review / rejected. Clean names go live on
- * their own; names the screen trips land in "review" and stay off the board until a
- * human flips them. Flip anything to "rejected" and it vanishes within ten seconds.
+ * Sheet "Scores": When | Player | Name | Score | Floor/Level | Detail | Status | Flag | Game
+ * Status is the approval switch: live / review / rejected. Clean names go live on their own;
+ * names the screen trips land in "review" and stay off the board until a human flips them.
+ * Rows with an empty Game column are Dead Fresh (it predates the column).
  */
 var SHEET = "Scores";
 var TOP = 20;
@@ -40,32 +41,36 @@ function sheet_() {
   var ss = SpreadsheetApp.getActive(); var sh = ss.getSheetByName(SHEET);
   if (!sh) {
     sh = ss.insertSheet(SHEET);
-    sh.appendRow(["When", "Player", "Name", "Score", "Floor", "Freshened", "Status", "Flag"]);
-    sh.setFrozenRows(1); sh.getRange("A1:H1").setFontWeight("bold");
+    sh.appendRow(["When", "Player", "Name", "Score", "Floor/Level", "Detail", "Status", "Flag", "Game"]);
+    sh.setFrozenRows(1); sh.getRange("A1:I1").setFontWeight("bold");
     sh.getRange("G2:G5000").setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(["live", "review", "rejected"], true).build());
   }
+  if (!sh.getRange("I1").getValue()) { sh.getRange("I1").setValue("Game").setFontWeight("bold"); }
   return sh;
 }
-function rows_() { var sh = sheet_(); var n = sh.getLastRow(); if (n < 2) return []; return sh.getRange(2, 1, n - 1, 8).getValues(); }
+function gameId_(g) { g = String(g || "").toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 24); return g || "deadfresh"; }
+function rows_() { var sh = sheet_(); var n = sh.getLastRow(); if (n < 2) return []; return sh.getRange(2, 1, n - 1, 9).getValues(); }
 function out_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
-function live_() {
-  var cache = CacheService.getScriptCache(); var hit = cache.get("board");
+function live_(game) {
+  var cache = CacheService.getScriptCache(); var key = "board:" + game; var hit = cache.get(key);
   if (hit) return JSON.parse(hit);
-  var live = rows_().filter(function (r) { return String(r[6]).toLowerCase() === "live"; })
+  var live = rows_().filter(function (r) { return String(r[6]).toLowerCase() === "live" && gameId_(r[8]) === game; })
     .map(function (r) { return { pid: String(r[1]), name: String(r[2]), score: Number(r[3]), round: Number(r[4]) }; })
     .sort(function (a, b) { return b.score - a.score; }).slice(0, 100);
-  cache.put("board", JSON.stringify(live), 10);
+  cache.put(key, JSON.stringify(live), 10);
   return live;
 }
 function doGet(e) {
-  var pid = (e && e.parameter && e.parameter.pid) || "";
-  var live = live_();
+  var p = (e && e.parameter) || {};
+  var pid = p.pid || "", game = gameId_(p.game);
+  var live = live_(game);
   var top = live.slice(0, TOP).map(function (s) { return { name: s.name, score: s.score, round: s.round, you: s.pid === pid }; });
   var mine = -1; for (var i = 0; i < live.length; i++) if (live[i].pid === pid) { mine = i; break; }
-  return out_({ top: top, yourRank: mine >= 0 ? mine + 1 : null, yourBest: mine >= 0 ? live[mine].score : null, runs: live.length });
+  return out_({ game: game, top: top, yourRank: mine >= 0 ? mine + 1 : null, yourBest: mine >= 0 ? live[mine].score : null, runs: live.length });
 }
 function doPost(e) {
   var b; try { b = JSON.parse(e.postData.contents); } catch (err) { return out_({ ok: false, error: "bad json" }); }
+  var game = gameId_(b.game);
   var name = String(b.name || "").replace(/[^\x20-\x7E]/g, "").trim().slice(0, 12);
   var score = Math.round(Number(b.score)), round = Math.round(Number(b.round)), kills = Math.round(Number(b.kills));
   var pid = String(b.pid || "").replace(/[^a-z0-9]/gi, "").slice(0, 16);
@@ -74,7 +79,7 @@ function doPost(e) {
   var flag = screenName(name).ok ? 0 : 1; if (b.flag === 1) flag = 1;
   var status = flag ? "review" : "live";
   var lock = LockService.getScriptLock(); lock.waitLock(5000);
-  try { sheet_().appendRow([new Date(), pid, name, score, round, kills, status, flag]); CacheService.getScriptCache().remove("board"); }
+  try { sheet_().appendRow([new Date(), pid, name, score, round, kills, status, flag, game === "deadfresh" ? "" : game]); CacheService.getScriptCache().remove("board:" + game); }
   finally { lock.releaseLock(); }
-  return out_({ ok: true, status: status });
+  return out_({ ok: true, status: status, game: game });
 }
