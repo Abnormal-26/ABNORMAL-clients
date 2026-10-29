@@ -48,7 +48,7 @@ export function dayAt(m) {
 export const OB = {
   cone:    { w: 24, h: 32 },
   bin:     { w: 34, h: 52 },
-  aframe:  { w: 88, h: 70 },
+  aframe:  { w: 96, h: 70 },
   paper:   { w: 42, h: 90 },
   puddle:  { w: 80, h: 6 },
   scooter: { w: 56, h: 54, move: 0.38 },   // rolls toward you at 38% of run speed
@@ -173,8 +173,9 @@ function curve(hold) {
   return { ys, air: k * TICK, apex, top, y: (t) => ys[Math.max(0, Math.min(ys.length - 1, Math.round(t / TICK)))] || 0 };
 }
 export const CURVES = { tap: curve(0), mid: curve(0.16), full: curve(0.4) };
-// banners hang just above the top of a tap-hop (hero head + a little air): tap under it, never hold
-OB.banner.hang = Math.ceil(CURVES.tap.top + HERO.HH + 2);
+// banners hang just above the top of a slow tap (a press of up to 180 ms) + the hero's head: tap under it, never hold
+CURVES.press180 = curve(0.18);
+OB.banner.hang = Math.ceil(CURVES.press180.top + HERO.HH + 2);
 
 /* ── Pattern library ("chunks"). Times are seconds of travel from the chunk start; ob() places an obstacle's left edge. ── */
 const C = (id, min, wt, len, build, extra = {}) => ({ id, min, wt, len, build, ...extra });

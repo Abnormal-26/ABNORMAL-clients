@@ -18,7 +18,7 @@ import { SHOT, SHOTS, INK, STONE, FONT, loadFont, lockTouch, buzz, safeInsets, d
 import { createBoard, renderBoard, savedName } from "../shared/board.js";
 import { createAudio } from "../shared/audio.js";
 import { U, TICK, V0, VMAX, HERO, newHero, createWorld, generate, physStep, plan, prune, reflow, clearRange, surfaceAt, ix, dayAt, OB } from "./sim.js";
-import { drawHero, drawBottleBody, drawCap, drawOb, outlineOb, drawHint, drawPower, drawSign, createCity, drawSky, drawGround, paletteAt, rgba, rgbOf, mix, signText, bannerOf } from "./art.js";
+import { setTextFloor, drawHero, drawBottleBody, drawCap, drawOb, outlineOb, drawHint, drawPower, drawSign, createCity, drawSky, drawGround, paletteAt, rgba, rgbOf, mix, signText, bannerOf } from "./art.js";
 
 const $ = (id) => document.getElementById(id);
 const cv = $("game"), ctx = cv.getContext("2d");
@@ -65,8 +65,11 @@ const viewWFor = (z) => 400 + 90 * z;   // world units across the column; widens
 /** Camera: world units across the screen and the px-per-unit scale. Landscape keeps the hero's size and shows more road. */
 function cam() {
   const z = R ? R.zoom : 0;
-  if (L.land) { const scale = L.landScale * (1 - 0.1 * z); return { scale, viewW: L.colW / scale }; }
-  const viewW = viewWFor(z); return { viewW, scale: L.colW / viewW };
+  // look-ahead is the same distance (so the same seconds) everywhere: 78% of the portrait view. Landscape's extra
+  // width shows the road behind you, never more road ahead, so rotating the phone is no advantage on the board.
+  const ahead = 0.78 * viewWFor(z);
+  if (L.land) { const scale = L.landScale * (1 - 0.1 * z), viewW = L.colW / scale; return { scale, viewW, hero: Math.max(0.22, 1 - ahead / viewW) }; }
+  const viewW = viewWFor(z); return { viewW, scale: L.colW / viewW, hero: 0.22 };
 }
 
 /* ── audio ──────────────────────────────────────────────────────────────── */
@@ -188,7 +191,7 @@ function tick() {
     // the sneakers' speed boost only runs out on the ground, so a jump is never cut short mid-air
     if (R.power.id === "exercise" ? S.boostOff : R.power.t <= 0) endPower();
   }
-  R.camX = S.x - 0.22 * cam().viewW;
+  { const c = cam(); R.camX = S.x - c.hero * c.viewW; }
   generate(W, S, S.x + 1800, { powerActive: !!R.power });
   prune(W, R.camX - 40, S.t);
   progress();
@@ -349,7 +352,7 @@ function animate(dt) {
   R.sqv += ((target - R.sq) * 520 - R.sqv * 20) * dt; R.sq += R.sqv * dt;
   R.nudgeV += (-R.nudge * 500 - R.nudgeV * 22) * dt; R.nudge += R.nudgeV * dt;
   R.shake = Math.max(0, R.shake - dt * 40);
-  R.zoom += (clamp((S.v - V0) / (VMAX - V0), 0, 1) - R.zoom) * Math.min(1, dt * 2);
+  R.zoom += (clamp((S.v - V0) / (VMAX - V0), 0, 1.6) - R.zoom) * Math.min(1, dt * 2);   // keeps widening with the late speed creep, so look-ahead stays ~1.2 s
   R.bulb = R.power && R.power.id === "focus" ? Math.min(1, R.bulb + dt * 4) : Math.max(0, R.bulb - dt * 3);
   R.signPulse = Math.max(0, R.signPulse - dt * 2.5);
   if (R.banner) { R.banner.t += dt; if (R.banner.t > 1.7) R.banner = null; }
@@ -374,8 +377,8 @@ function stepTumble(dt) {
 function render(alpha, now) {
   const S = R.S;
   const hx = lerp(R.prev.x, S.x, alpha), hy = lerp(R.prev.y, S.y, alpha), tr = lerp(R.prev.t, S.t, alpha);
-  const { viewW, scale } = cam();
-  const camX = hx - 0.22 * viewW; R.camX = camX;
+  const { viewW, scale, hero } = cam();
+  const camX = hx - hero * viewW; R.camX = camX; setTextFloor(12.5 / scale);
   const m = hx / U, P = paletteAt(m);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   if (L.colX > 0) drawSides(P);
@@ -700,13 +703,13 @@ document.querySelectorAll("[data-mute]").forEach((b) => b.addEventListener("clic
 window.__game = {
   state: () => R ? { phase, distance: Math.floor(R.S.x / U), speed: +(R.S.v / U).toFixed(2), power: R.power ? R.power.id : null, powerT: R.power ? +R.power.t.toFixed(2) : 0, nap: R.nap, napping: R.napT > 0,
     dots: R.dots, score: Math.floor(R.S.x / U) + 10 * R.dots, day: dayAt(R.S.x / U).name, seed: R.seed, y: +R.S.y.toFixed(1), onGround: R.S.onGround, invT: +Math.max(0, R.invT).toFixed(2),
-    paused: R.paused, autopilot, invincible, ts: +R.ts.toFixed(2), runAs, zoom: +R.zoom.toFixed(2) } : { phase },
+    aheadS: +((() => { const c = cam(); return (1 - c.hero) * c.viewW / R.S.v; })()).toFixed(2), paused: R.paused, autopilot, invincible, ts: +R.ts.toFixed(2), runAs, zoom: +R.zoom.toFixed(2) } : { phase },
   start: () => { if (phase !== "play") { newRun(0); phase = "play"; lastTs = 0; $("start").classList.add("hidden"); $("end").classList.add("hidden"); } },
   skipTo: (metres) => {
     if (!R) return; const keep = { dots: R.dots, power: R.power, nap: R.nap };
     const S = newHero(metres * U); S.t = R.S.t; R.S = S; R.W = createWorld(R.seed, metres); R.prev = { x: S.x, y: 0, t: S.t };
     R.rw = REWARDS.filter((r) => metres >= r.m).length; R.dayI = dayAt(metres).i; R.dayId = dayAt(metres).id; R.cmds = []; R.cur = null; R.lastPlan = -9; R.knocked = []; Object.assign(R, keep);
-    R.zoom = clamp((S.v - V0) / (VMAX - V0), 0, 1); city.reset();
+    R.zoom = clamp((S.v - V0) / (VMAX - V0), 0, 1.6); city.reset();
   },
   invincible: (on = true) => { invincible = !!on; },
   give: (id) => { if (R && SHOT[id] && phase === "play") givePower(id); },

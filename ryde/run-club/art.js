@@ -21,6 +21,8 @@ export function mix(a, b, f) {
   const c = (i) => Math.round(A[i] + (B[i] - A[i]) * f).toString(16).padStart(2, "0");
   return `#${c(0)}${c(1)}${c(2)}`;
 }
+/** Smallest in-world lettering, in world units; the game sets it every frame so text never drops below ~12.5 px. */
+let TXT = 12; export function setTextFloor(u) { TXT = u; }
 export const rgba = (hex, a) => { const c = rgbOf(hex); return `rgba(${c[0]},${c[1]},${c[2]},${a})`; };
 
 /* ── the day's palettes (one shot accent per moment) ───────────────────────── */
@@ -198,7 +200,7 @@ function bulb(ctx, x, y, a, t) {
 // each draws with its left edge at x and its base at yb (screen y, up is negative)
 const LIDS = ["#FFC845", "#EE3831"];
 const SIGNS = [["MONDAY"], ["MONDAY"], ["REPLY", "ALL"], ["8AM"], ["MONDAY"]];
-const BANNERS = [["GRAND OPENING"], ["SALE ON NOW"], ["FREE WI-FI"], ["BRUNCH IS BACK"]];
+const BANNERS = [["SALE ON NOW"], ["FREE WI-FI"], ["NEW MENU"], ["OPEN LATE"]];   // short enough to stay ≥ 12 px on a 160-unit banner
 export const signText = (it) => SIGNS[Math.floor(it.var * SIGNS.length)];
 export const bannerOf = (it) => BANNERS[Math.floor(it.var * BANNERS.length)];
 
@@ -240,7 +242,7 @@ function aframe(ctx, x, yb, w, h, lines) {
   ctx.fillStyle = "#131313"; rr(ctx, x + 5, yb - h + 3, w - 10, h - 15, 2); ctx.fill();
   ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
   const n = lines.length, mid = yb - h + 3 + (h - 15) / 2;
-  for (let i = 0; i < n; i++) { fitFont(ctx, 900, 17, lines[i], w - 18, 16.5); ctx.fillText(lines[i], x + w / 2, mid - 2 + (i - (n - 1) / 2) * 18); }
+  for (let i = 0; i < n; i++) { fitFont(ctx, 900, Math.max(17, TXT), lines[i], w - 18, TXT); ctx.fillText(lines[i], x + w / 2, mid - 2 + (i - (n - 1) / 2) * 18); }
   ctx.fillStyle = "#EE3831"; ctx.fillRect(x + 11, yb - 20, w - 22, 2.5);
 }
 function paper(ctx, x, yb, w, h, v, t) {
@@ -317,7 +319,7 @@ function banner(ctx, x, yb, it, t, P) {
   path(); ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = ink; ctx.lineWidth = 2.5; ctx.lineJoin = "round"; ctx.stroke();
   ctx.fillStyle = SHOT.energy.color; ctx.fillRect(x + 6, y0 + 5, it.w - 12, 3);
   ctx.fillStyle = ink; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  fitFont(ctx, 900, 20, text, it.w - 16, 14); ctx.fillText(text, x + it.w / 2, y0 + it.h / 2 + 1);
+  fitFont(ctx, 900, Math.max(20, TXT), text, it.w - 16, TXT); ctx.fillText(text, x + it.w / 2, y0 + it.h / 2 + 1);
 }
 
 /** FOCUS: outline a hazard in light-bulb yellow. */
@@ -387,12 +389,14 @@ export function drawIcon(ctx, id, t) {
 
 /** km marker: a lollipop sign, a flat brand circle on an ink pole. */
 export function drawSign(ctx, x, m, P, fs) {
+  // the circle grows with the lettering, so the number never has to shrink below the text floor
+  const f = Math.max(15, fs, TXT), r = Math.max(24, f * 1.75), cy = -96 - r + 12;
   ctx.fillStyle = P.dark > 0.5 ? "#8C84A3" : INK; ctx.fillRect(x - 1.6, -96, 3.2, 96);
-  ctx.fillStyle = P.accent; ctx.beginPath(); ctx.arc(x, -108, 24, 0, 7); ctx.fill();
+  ctx.fillStyle = P.accent; ctx.beginPath(); ctx.arc(x, cy, r, 0, 7); ctx.fill();
   const t = m % 1000 === 0 ? `${m / 1000}` : `${m}`, u = m % 1000 === 0 ? "km" : "m";
   ctx.fillStyle = P.accent === "#8564AB" || P.dark > 0.5 ? "#fff" : INK; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
-  fitFont(ctx, 900, Math.max(15, fs), t, 38, 9); ctx.fillText(t, x, -106);
-  ctx.font = `800 ${Math.max(11, fs * 0.8)}px ${FONT}`; ctx.fillText(u, x, -92);
+  fitFont(ctx, 900, f, t, r * 2 - 8, TXT); ctx.fillText(t, x, cy + f * 0.15);
+  ctx.font = `800 ${Math.max(TXT, f * 0.8)}px ${FONT}`; ctx.fillText(u, x, cy + f * 0.15 + Math.max(TXT, f * 0.8));
 }
 
 /* ── the city ────────────────────────────────────────────────────────────────
